@@ -1,0 +1,4 @@
+[submodule "resources"]
+	path = resources
+	url = git@github.com:jamalh110/cs5416-final-project.git
+	branch = main
