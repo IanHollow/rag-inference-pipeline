@@ -41,7 +41,7 @@ dev = [
 
 
 [tool.ruff]
-required-version = ">=0.14.4"
+required-version = ">=0.14.0"
 target-version = "py310"
 fix = true
 line-length = 100
@@ -134,8 +134,12 @@ warn_no_return = true
 disallow_untyped_defs = true
 no_implicit_optional = true
 strict_equality = true
-ignore_missing_imports = true
+ignore_missing_imports = false
 exclude = '(build|dist|\.venv|venv|\.git|__pycache__|resources)'
+
+[[tool.mypy.overrides]]
+module = ["faiss", "faiss.*"]
+ignore_missing_imports = true
 
 [tool.coverage.run]
 branch = true

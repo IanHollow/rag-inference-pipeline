@@ -37,10 +37,13 @@ repos:
     rev: v1.18.2
     hooks:
       - id: mypy
-        stages: [pre-push]
         args:
+          - --config-file=pyproject.toml
           - --python-version=3.10
+          - --show-error-codes
+          - --pretty
         additional_dependencies:
+          - numpy
           - types-requests
 
   - repo: https://github.com/shellcheck-py/shellcheck-py
