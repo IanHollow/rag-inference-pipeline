@@ -4,11 +4,12 @@ import sqlite3
 import faiss
 import numpy as np
 
+DOCUMENTS_DIR = "documents/"
+
 
 def _initialize_documents() -> None:
     """Create dummy documents database if it doesn't exist"""
 
-    DOCUMENTS_DIR = "documents/"
     NUM_DOCUMENTS = 1000000
     Path(DOCUMENTS_DIR).mkdir(parents=True, exist_ok=True)
 
@@ -72,7 +73,7 @@ def _create_faiss_index() -> None:
     """Create a large FAISS index"""
     dim = 768
     num_docs = 1000000
-    index_path = "faiss_index.bin"
+    index_path = Path(DOCUMENTS_DIR) / "faiss_index.bin"
 
     nlist = 4096
     # Create index
