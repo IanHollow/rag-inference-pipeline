@@ -111,6 +111,7 @@ addopts = "-ra --showlocals --strict-markers --strict-config"
 testpaths = ["tests"]
 pythonpath = ["src"]
 xfail_strict = true
+norecursedirs = ["resources", ".git", ".tox", "dist", "build", ".eggs"]
 
 [tool.mypy]
 python_version = "3.10"
@@ -121,7 +122,7 @@ disallow_untyped_defs = true
 no_implicit_optional = true
 strict_equality = true
 ignore_missing_imports = true
-exclude = '(build|dist|\.venv|venv|\.git|__pycache__)'
+exclude = '(build|dist|\.venv|venv|\.git|__pycache__|resources)'
 
 [tool.coverage.run]
 branch = true
