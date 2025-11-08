@@ -105,6 +105,19 @@ ignore = [
     "E501", # line-too-long
 ]
 
+[tool.ruff.lint.isort]
+known-first-party = ["pipeline"]
+combine-as-imports = true
+force-sort-within-sections = true
+
+[tool.ruff.lint.extend-per-file-ignores]
+"tests/**/*" = ["S101"]
+"src/pipeline/__init__.py" = ["F401"]
+"scripts/*" = ["T201", "T203"]
+
+# [tool.ruff.lint.mccabe]
+# max-complexity = 12
+
 [tool.pytest.ini_options]
 minversion = "8.4.2"
 addopts = "-ra --showlocals --strict-markers --strict-config"
