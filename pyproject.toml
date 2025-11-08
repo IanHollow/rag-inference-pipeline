@@ -41,13 +41,38 @@ dev = [
 
 
 [tool.ruff]
+required-version = ">=0.14.4"
 target-version = "py310"
+fix = true
 line-length = 100
 indent-width = 4
 
+[tool.ruff.format]
+indent-style = "space"
+
 [tool.ruff.lint]
-select = ["E", "F", "I", "B", "UP", "SIM", "C4", "PTH", "RUF"]
-ignore = ["E501"]
+select = [
+    "E",    # Error
+    "W",    # Warning
+    "F",    # Pyflakes
+    "I",    # isort
+    "UP",   # pyupgrade
+    "B",    # flake8-bugbear
+    "C4",   # flake8-comprehensions
+    "SIM",  # flake8-simplify
+    "PTH",  # flake8-use-pathlib
+    "TC",   # flake8-type-checking
+    "S",    # flake8-bandit
+    "LOG",  # flake8-logging
+    "G",    # flake8-logging-format
+    "NPY",  # NumPy-specific rules
+    "RUF",  # Ruff-specific rules
+    "PERF", # Perflint
+    "PIE",  # flake8-pie
+]
+ignore = [
+    "E501", # line-too-long
+]
 exclude = [
     # default
     ".bzr",
