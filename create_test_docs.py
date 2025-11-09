@@ -73,7 +73,7 @@ def _create_faiss_index() -> None:
     """Create a large FAISS index"""
     dim = 768
     num_docs = 1000000
-    index_path = Path(DOCUMENTS_DIR) / "faiss_index.bin"
+    index_path = "faiss_index.bin"
 
     nlist = 4096
     # Create index
