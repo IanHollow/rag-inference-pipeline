@@ -208,3 +208,4 @@ __marimo__/
 
 # Project specific
 documents/
+faiss_index.bin
