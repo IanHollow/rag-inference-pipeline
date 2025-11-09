@@ -1,10 +1,13 @@
+import os
 from pathlib import Path
 import sqlite3
 
 import faiss
 import numpy as np
 
-DOCUMENTS_DIR = "documents/"
+# Allow configuration via environment variables for flexibility
+DOCUMENTS_DIR = os.environ.get("DOCUMENTS_DIR", "documents/")
+FAISS_INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", str(Path(DOCUMENTS_DIR) / "faiss_index.bin"))
 
 
 def _initialize_documents() -> None:
@@ -73,14 +76,19 @@ def _create_faiss_index() -> None:
     """Create a large FAISS index"""
     dim = 768
     num_docs = 1000000
-    index_path = "faiss_index.bin"
+
+    # Ensure the directory exists for the index path
+    index_path = Path(FAISS_INDEX_PATH)
+    index_path.parent.mkdir(parents=True, exist_ok=True)
 
     nlist = 4096
     # Create index
     quantizer = faiss.IndexFlatL2(dim)
     index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_L2)
     rng = np.random.default_rng()
-    index.train(rng.standard_normal((10000, dim)).astype("float32"))
+    training_data = rng.standard_normal((10000, dim)).astype("float32")
+    n, x = training_data
+    index.train(n, x)
     # Add vectors in batches to manage memory
     batch_size = 10000
     for i in range(0, num_docs, batch_size):
@@ -88,17 +96,25 @@ def _create_faiss_index() -> None:
         batch_embeddings = rng.standard_normal((min(batch_size, num_docs - i), dim)).astype(
             "float32"
         )
-        index.add(batch_embeddings)
+        n, x = batch_embeddings
+        index.add(n, x)
 
         if i % 100000 == 0:
             print(f"Added {i}/{num_docs} vectors to index...")
 
     # Save index
     index.nprobe = 64
-    faiss.write_index(index, index_path)
-    print("FAISS index created and saved")
+    faiss.write_index(index, str(index_path))
+    print(f"FAISS index created and saved at {index_path}")
+    print(f"Index size: {index_path.stat().st_size / 1e6:.2f} MB")
 
 
 if __name__ == "__main__":
+    print(f"Documents directory: {DOCUMENTS_DIR}")
+    print(f"FAISS index path: {FAISS_INDEX_PATH}")
+    print()
     _initialize_documents()
     _create_faiss_index()
+    print("\n✅ Setup complete!")
+    print(f"   - Documents DB: {Path(DOCUMENTS_DIR) / 'documents.db'}")
+    print(f"   - FAISS index: {FAISS_INDEX_PATH}")
