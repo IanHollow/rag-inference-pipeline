@@ -10,7 +10,7 @@ fi
 python3 -m venv .venv
 # shellcheck disable=SC1091
 . .venv/bin/activate
-python3 -m pip install --upgrade pip
-python3 -m pip install -e .
+pip install --upgrade pip setuptools wheel
+pip install -r requirements.txt
 
 echo "Installation complete!"
