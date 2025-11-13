@@ -1,0 +1,84 @@
+---
+name: Tests
+on:  # yamllint disable-line rule:truthy
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+jobs:
+  test:
+    name: Test Python on ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest]
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python from .python-version
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: uv.lock
+      - name: Install dependencies
+        run: |
+          uv sync --all-extras --dev
+      - name: Run tests with coverage
+        run: |
+          uv run pytest --cov --cov-report=xml \
+            --cov-report=term-missing --junitxml=junit.xml -v
+      - name: Upload coverage to Codecov
+        if: matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@v5
+        with:
+          files: ./coverage.xml
+          flags: unittests
+          name: codecov-umbrella
+          fail_ci_if_error: false
+      - name: Upload test results to Artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-results-${{ matrix.os }}
+          path: |
+            junit.xml
+            coverage.xml
+          retention-days: 30
+      - name: Test Summary
+        uses: test-summary/action@v2
+        if: always()
+        with:
+          paths: junit.xml
+  test-summary:
+    name: Test Summary Report
+    runs-on: ubuntu-latest
+    needs: test
+    if: always()
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Install uv
+        uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+      - name: Install dependencies
+        run: uv sync --dev
+      - name: Run pytest with markdown report
+        uses: pavelzw/pytest-action@v2
+        with:
+          verbose: true
+          emoji: true
+          job-summary: true
+          custom-arguments: --cov --cov-report=term-missing
+          custom-pytest: uv run pytest
+          report-title: Test Report Summary
+          click-to-expand: true
