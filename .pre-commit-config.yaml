@@ -83,6 +83,7 @@ repos:
       - id: sync-requirements
         name: Sync requirements.txt
         entry: python scripts/sync_requirements.py
-        language: system
+        language: python
         files: ^pyproject\.toml$
         pass_filenames: false
+        additional_dependencies: [tomli]
