@@ -64,7 +64,7 @@ repos:
         name: taplo lint (TOML)
         files: ^(pyproject|taplo|\.taplo)\.toml$|\.toml$
   - repo: https://github.com/lyz-code/yamlfix
-    rev: main
+    rev: 1.19.0
     hooks:
       - id: yamlfix
         files: ^.*\.(yml|yaml)$
