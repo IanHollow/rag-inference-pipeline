@@ -39,7 +39,6 @@ repos:
       - id: mypy
         args:
           - --config-file=pyproject.toml
-          - --python-version=3.10
           - --show-error-codes
           - --pretty
         additional_dependencies:
