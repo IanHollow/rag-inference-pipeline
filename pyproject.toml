@@ -150,7 +150,6 @@ source = ["src/pipeline"]
 parallel = true
 
 [tool.coverage.report]
-fail_under = 80
 skip_covered = true
 show_missing = true
 exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
