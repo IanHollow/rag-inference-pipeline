@@ -7,7 +7,7 @@ name = "cs5416-ml-pipeline"
 version = "0.1.0"
 description = "Distributed ML inference pipeline"
 readme = "README.md"
-requires-python = ">=3.10" # UGCLinux uses Python 3.10.12 as of Nov 7, 2025
+requires-python = ">=3.13" # UGCLinux has Python 3.10.12 installed as default as of Nov 7, 2025
 authors = [
   { name = "Kadambari Mirashi", email = "km2266@cornell.edu" },
   { name = "Ian Holloway", email = "imh39@cornell.edu" },
@@ -15,9 +15,9 @@ authors = [
   { name = "Rachel Yan", email = "sy625@cornell.edu" },
 ]
 dependencies = [
-  "torch>=2.9.0",
+  "torch>=2.9.1",
   "transformers>=4.57.1",
-  "numpy>=2.2.6",
+  "numpy>=2.3.4",
   "datasets>=4.4.1",
   "jinja2>=3.1.6",
   "faiss-cpu>=1.12.0",
@@ -42,7 +42,7 @@ dev = [
 
 [tool.ruff]
 required-version = ">=0.14.0"
-target-version = "py310"
+target-version = "py313"
 fix = true
 line-length = 100
 indent-width = 4
@@ -126,7 +126,7 @@ pythonpath = ["src"]
 norecursedirs = ["resources", ".git", ".tox", "dist", "build", ".eggs"]
 
 [tool.mypy]
-python_version = "3.10"
+python_version = "3.13"
 warn_unused_ignores = true
 warn_redundant_casts = true
 warn_no_return = true
