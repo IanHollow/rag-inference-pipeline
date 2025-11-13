@@ -1,0 +1,22 @@
+---
+name: Prek Checks
+on:  # yamllint disable-line rule:truthy
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main, develop]
+jobs:
+  prek:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v5
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version-file: .python-version
+      - name: Run prek checks
+        uses: j178/prek-action@v1
+        with:
+          extra-args: --all-files
+          token: ${{ github.token }}
