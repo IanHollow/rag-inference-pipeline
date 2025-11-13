@@ -83,3 +83,12 @@ repos:
     hooks:
       - id: yamllint
         files: ^.*\.(yml|yaml)$
+
+  - repo: local
+    hooks:
+      - id: sync-requirements
+        name: Sync requirements.txt
+        entry: python scripts/sync_requirements.py
+        language: system
+        files: ^pyproject\.toml$
+        pass_filenames: false
