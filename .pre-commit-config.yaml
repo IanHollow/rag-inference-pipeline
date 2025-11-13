@@ -24,7 +24,7 @@ repos:
     hooks:
       - id: uv-lock
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.14.4
+    rev: v0.14.5
     hooks:
       - id: ruff
         args: [--fix]
@@ -63,17 +63,27 @@ repos:
       - id: taplo-lint
         name: taplo lint (TOML)
         files: ^(pyproject|taplo|\.taplo)\.toml$|\.toml$
-  - repo: https://github.com/lyz-code/yamlfix
-    rev: 1.19.0
+  - repo: https://github.com/ITProKyle/pre-commit-hook-yamlfmt
+    rev: v0.4.0
     hooks:
-      - id: yamlfix
+      - id: yamlfmt
         files: ^.*\.(yml|yaml)$
+        args:
+          - --mapping
+          - "2"
+          - --sequence
+          - "4"
+          - --offset
+          - "2"
+          - --width
+          - "80"
+          - --no-implicit-start
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.37.1
     hooks:
       - id: yamllint
         files: ^.*\.(yml|yaml)$
-        args: [--strict]
+        args: [--format=parsable, --strict]
   - repo: https://github.com/rhysd/actionlint
     rev: v1.7.8
     hooks:

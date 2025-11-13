@@ -1,6 +1,6 @@
 ---
 name: Prek Checks
-on:  # yamllint disable-line rule:truthy
+"on":
   push:
     branches: [main, develop]
   pull_request:
