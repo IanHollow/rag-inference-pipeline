@@ -8,7 +8,7 @@ import numpy as np
 # Allow configuration via environment variables for flexibility
 DOCUMENTS_DIR = os.environ.get("DOCUMENTS_DIR", "documents/")
 FAISS_INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", str(Path(DOCUMENTS_DIR) / "faiss_index.bin"))
-NUM_DOCUMENTS = 1000000
+NUM_DOCUMENTS = 4500000
 
 
 def _initialize_documents() -> None:
