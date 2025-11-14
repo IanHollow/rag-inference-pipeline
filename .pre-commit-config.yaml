@@ -42,6 +42,9 @@ repos:
           - pydantic-settings
           - fastapi
           - uvicorn
+          - torch
+          - sentence_transformers
+          - prometheus_client
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:
