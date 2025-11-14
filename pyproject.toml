@@ -103,24 +103,28 @@ indent-style = "space"
 
 [tool.ruff.lint]
 select = [
-  "E",    # Error
-  "W",    # Warning
-  "F",    # Pyflakes
-  "I",    # isort
-  "N",    # pep8-naming
-  "UP",   # pyupgrade
-  "B",    # flake8-bugbear
-  "C4",   # flake8-comprehensions
-  "SIM",  # flake8-simplify
-  "PTH",  # flake8-use-pathlib
-  "TC",   # flake8-type-checking
-  "S",    # flake8-bandit
-  "LOG",  # flake8-logging
-  "G",    # flake8-logging-format
-  "NPY",  # NumPy-specific rules
-  "RUF",  # Ruff-specific rules
-  "PERF", # Perflint
-  "PIE",  # flake8-pie
+  "E",     # Error
+  "W",     # Warning
+  "F",     # Pyflakes
+  "I",     # isort
+  "N",     # pep8-naming
+  "UP",    # pyupgrade
+  "B",     # flake8-bugbear
+  "C4",    # flake8-comprehensions
+  "SIM",   # flake8-simplify
+  "PTH",   # flake8-use-pathlib
+  "TC",    # flake8-type-checking
+  "S",     # flake8-bandit
+  "LOG",   # flake8-logging
+  "G",     # flake8-logging-format
+  "NPY",   # NumPy-specific rules
+  "RUF",   # Ruff-specific rules
+  "PERF",  # Perflint
+  "PIE",   # flake8-pie
+  "FAST",  # FastAPI
+  "ASYNC", # flake8-async
+  "ANN",   # flake8-annotations
+  "T20",   # flake8-print
 ]
 ignore = [
   "E501", # line-too-long
