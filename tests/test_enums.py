@@ -34,9 +34,7 @@ class TestServiceEndpoint:
 
     def test_retrieval_endpoints(self) -> None:
         """Test that retrieval service endpoints are defined."""
-        assert ServiceEndpoint.RETRIEVAL_EMBED.value == "/retrieval/embed"
-        assert ServiceEndpoint.RETRIEVAL_SEARCH.value == "/retrieval/search"
-        assert ServiceEndpoint.RETRIEVAL_RERANK.value == "/retrieval/rerank"
+        assert ServiceEndpoint.RETRIEVE.value == "/retrieve"
 
     def test_generation_endpoints(self) -> None:
         """Test that generation service endpoints are defined."""
