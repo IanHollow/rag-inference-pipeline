@@ -38,9 +38,7 @@ class TestServiceEndpoint:
 
     def test_generation_endpoints(self) -> None:
         """Test that generation service endpoints are defined."""
-        assert ServiceEndpoint.GENERATION_GENERATE.value == "/generation/generate"
-        assert ServiceEndpoint.GENERATION_SENTIMENT.value == "/generation/sentiment"
-        assert ServiceEndpoint.GENERATION_SAFETY.value == "/generation/safety"
+        assert ServiceEndpoint.GENERATE.value == "/generate"
 
 
 class TestDeriveNodeRole:
