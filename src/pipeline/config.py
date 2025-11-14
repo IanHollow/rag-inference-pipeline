@@ -93,6 +93,12 @@ class PipelineSettings(BaseSettings):
         description="Maximum sequence length for truncation",
     )
 
+    rerank_top_n: int = Field(
+        default=10,
+        ge=1,
+        description="Number of top documents to return after reranking",
+    )
+
     # === Batching Configuration ===
     gateway_batch_size: int = Field(
         default=4,

@@ -25,9 +25,7 @@ class ServiceEndpoint(str, Enum):
     RETRIEVE = "/retrieve"
 
     # Generation service endpoints
-    GENERATION_GENERATE = "/generation/generate"
-    GENERATION_SENTIMENT = "/generation/sentiment"
-    GENERATION_SAFETY = "/generation/safety"
+    GENERATE = "/generate"
 
 
 def derive_node_role(node_number: int) -> NodeRole:
