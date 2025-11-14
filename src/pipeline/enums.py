@@ -22,9 +22,7 @@ class ServiceEndpoint(str, Enum):
     METRICS = "/metrics"
 
     # Retrieval service endpoints
-    RETRIEVAL_EMBED = "/retrieval/embed"
-    RETRIEVAL_SEARCH = "/retrieval/search"
-    RETRIEVAL_RERANK = "/retrieval/rerank"
+    RETRIEVE = "/retrieve"
 
     # Generation service endpoints
     GENERATION_GENERATE = "/generation/generate"
