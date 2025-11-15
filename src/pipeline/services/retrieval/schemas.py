@@ -24,7 +24,8 @@ class RetrievalDocument(BaseModel):
 
     doc_id: int = Field(..., description="Document ID")
     title: str = Field(..., description="Document title")
-    snippet: str = Field(..., description="Document content snippet")
+    content: str = Field(..., description="Document content")
+    category: str = Field(default="", description="Document category")
     score: float = Field(..., description="FAISS similarity score")
 
 

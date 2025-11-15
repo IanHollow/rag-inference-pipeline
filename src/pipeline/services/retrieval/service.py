@@ -261,7 +261,8 @@ async def retrieve(request: RetrievalRequest) -> RetrievalResponse:
                     RetrievalDocument(
                         doc_id=doc.doc_id,
                         title=doc.title,
-                        snippet=doc.content,
+                        content=doc.content,
+                        category=doc.category or "",
                         score=float(score),
                     )
                 )

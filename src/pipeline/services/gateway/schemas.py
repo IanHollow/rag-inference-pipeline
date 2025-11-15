@@ -40,9 +40,8 @@ class RetrievalResponse(BaseModel):
     """Response from Node 1 /retrieve endpoint."""
 
     request_id: str = Field(..., description="Echo of request ID")
-    doc_ids: list[int] = Field(..., description="List of retrieved document IDs")
-    documents: list[dict[str, str | int]] = Field(
-        ..., description="List of document objects with doc_id, title, content, category"
+    docs: list[dict[str, str | int | float]] = Field(
+        ..., description="List of retrieved documents with doc_id, title, snippet, score"
     )
 
 
@@ -51,7 +50,9 @@ class GenerationRequest(BaseModel):
 
     request_id: str = Field(..., description="Request identifier")
     query: str = Field(..., description="Original query")
-    documents: list[dict[str, str | int]] = Field(..., description="Reranked documents from Node 1")
+    docs: list[dict[str, str | int | float]] = Field(
+        ..., description="Retrieved documents from Node 1"
+    )
 
 
 class GenerationResponse(BaseModel):

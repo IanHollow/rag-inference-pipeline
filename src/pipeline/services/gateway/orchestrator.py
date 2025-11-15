@@ -154,7 +154,7 @@ class Orchestrator:
             GenerationRequest(
                 request_id=req.request_id,
                 query=req.query,
-                documents=resp.documents,
+                docs=resp.docs,
             )
             for req, resp in zip(batch.requests, retrieval_responses, strict=False)
         ]
@@ -209,7 +209,10 @@ class Orchestrator:
         )
 
         try:
-            payload = {"requests": [req.model_dump() for req in requests]}
+            payload = {
+                "batch_id": str(batch_id),
+                "items": [req.model_dump() for req in requests],
+            }
 
             response_data = await self.retrieval_client.post(
                 ServiceEndpoint.RETRIEVE.value,
@@ -217,7 +220,7 @@ class Orchestrator:
             )
 
             # Parse responses
-            responses = [RetrievalResponse(**resp) for resp in response_data["responses"]]
+            responses = [RetrievalResponse(**resp) for resp in response_data["items"]]
 
             logger.debug(
                 "Retrieval service returned %d responses for batch %d",
@@ -259,7 +262,10 @@ class Orchestrator:
         )
 
         try:
-            payload = {"requests": [req.model_dump() for req in requests]}
+            payload = {
+                "batch_id": str(batch_id),
+                "items": [req.model_dump() for req in requests],
+            }
 
             response_data = await self.generation_client.post(
                 ServiceEndpoint.GENERATE.value,
@@ -267,7 +273,7 @@ class Orchestrator:
             )
 
             # Parse responses
-            responses = [GenerationResponse(**resp) for resp in response_data["responses"]]
+            responses = [GenerationResponse(**resp) for resp in response_data["items"]]
 
             logger.debug(
                 "Generation service returned %d responses for batch %d",
