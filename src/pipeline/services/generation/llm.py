@@ -73,7 +73,7 @@ class LLMGenerator:
             # Load model with appropriate dtype
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+                dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
                 # TODO: look into re-enabling these options which require the accelerate python package
                 # low_cpu_mem_usage=True,
                 # device_map=str(self.device),
