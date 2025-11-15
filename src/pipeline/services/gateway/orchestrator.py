@@ -2,11 +2,13 @@
 Orchestrator for coordinating the entire ML pipeline across nodes.
 """
 
+import json
 import logging
 import time
 
 from ...config import get_settings
 from ...enums import ServiceEndpoint
+from ...telemetry import batch_size_histogram, latency_histogram, rpc_duration_histogram
 from .batch_scheduler import Batch, BatchScheduler
 from .rpc_client import RPCClient, RPCError
 from .schemas import (
@@ -113,7 +115,7 @@ class Orchestrator:
             )
             raise RPCError(f"Pipeline processing failed: {e}") from e
 
-    async def _process_batch(self, batch: Batch) -> list[QueryResponse]:
+    async def _process_batch(self, batch: Batch[QueryResponse]) -> list[QueryResponse]:
         """
         Process a batch of requests through the pipeline.
 
@@ -135,7 +137,13 @@ class Orchestrator:
             len(batch),
         )
 
+        # Record batch size metric
+        batch_size_histogram.labels(node=str(settings.node_number), service="gateway").observe(
+            len(batch)
+        )
+
         # Step 1: Retrieve documents from Node 1
+        retrieval_start = time.time()
         retrieval_requests = [
             RetrievalRequest(
                 request_id=req.request_id,
@@ -148,8 +156,10 @@ class Orchestrator:
             batch.batch_id,
             retrieval_requests,
         )
+        retrieval_duration = (time.time() - retrieval_start) * 1000  # ms
 
         # Step 2: Generate responses from Node 2
+        generation_start = time.time()
         generation_requests = [
             GenerationRequest(
                 request_id=req.request_id,
@@ -163,6 +173,7 @@ class Orchestrator:
             batch.batch_id,
             generation_requests,
         )
+        generation_duration = (time.time() - generation_start) * 1000  # ms
 
         # Step 3: Build final responses
         final_responses = [
@@ -175,11 +186,26 @@ class Orchestrator:
             for gen_resp in generation_responses
         ]
 
-        batch_elapsed = time.time() - batch_start
+        batch_elapsed_ms = (time.time() - batch_start) * 1000
+
+        # Structured log for profiling analysis
         logger.info(
-            "Batch %d completed in %.3fs",
-            batch.batch_id,
-            batch_elapsed,
+            json.dumps(
+                {
+                    "event": "batch_completed",
+                    "batch_id": batch.batch_id,
+                    "size": len(batch),
+                    "latency_ms": round(batch_elapsed_ms, 2),
+                    "node1_ms": round(retrieval_duration, 2),
+                    "node2_ms": round(generation_duration, 2),
+                    "timestamp": batch_start,
+                }
+            )
+        )
+
+        # Record latency metric
+        latency_histogram.labels(node=str(settings.node_number), service="gateway").observe(
+            batch_elapsed_ms / 1000
         )
 
         return final_responses
@@ -214,18 +240,26 @@ class Orchestrator:
                 "items": [req.model_dump() for req in requests],
             }
 
+            rpc_start = time.time()
             response_data = await self.retrieval_client.post(
                 ServiceEndpoint.RETRIEVE.value,
                 payload,
             )
+            rpc_duration = time.time() - rpc_start
+
+            # Record RPC duration
+            rpc_duration_histogram.labels(
+                source_node=str(settings.node_number), target_service="retrieval"
+            ).observe(rpc_duration)
 
             # Parse responses
             responses = [RetrievalResponse(**resp) for resp in response_data["items"]]
 
             logger.debug(
-                "Retrieval service returned %d responses for batch %d",
+                "Retrieval service returned %d responses for batch %d (%.3fs)",
                 len(responses),
                 batch_id,
+                rpc_duration,
             )
 
             return responses
@@ -267,18 +301,26 @@ class Orchestrator:
                 "items": [req.model_dump() for req in requests],
             }
 
+            rpc_start = time.time()
             response_data = await self.generation_client.post(
                 ServiceEndpoint.GENERATE.value,
                 payload,
             )
+            rpc_duration = time.time() - rpc_start
+
+            # Record RPC duration
+            rpc_duration_histogram.labels(
+                source_node=str(settings.node_number), target_service="generation"
+            ).observe(rpc_duration)
 
             # Parse responses
             responses = [GenerationResponse(**resp) for resp in response_data["items"]]
 
             logger.debug(
-                "Generation service returned %d responses for batch %d",
+                "Generation service returned %d responses for batch %d (%.3fs)",
                 len(responses),
                 batch_id,
+                rpc_duration,
             )
 
             return responses

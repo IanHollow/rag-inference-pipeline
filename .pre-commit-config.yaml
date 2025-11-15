@@ -51,6 +51,7 @@ repos:
           - opentelemetry-instrumentation-fastapi
           - httpx
           - pytest_asyncio
+          - types-psutil
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:
