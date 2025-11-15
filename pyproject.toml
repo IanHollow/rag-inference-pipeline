@@ -196,3 +196,10 @@ packages = ["src/pipeline"]
 
 [tool.hatch.build.targets.sdist]
 include = ["src/pipeline", "README.md", "pyproject.toml", "requirements.txt"]
+
+[tool.yamlfix]
+whitelines = 1
+line_length = 80
+section_whitelines = 1
+quote_representation = '"'
+preserve_quotes = true

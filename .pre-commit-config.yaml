@@ -1,9 +1,11 @@
 ---
 default_language_version:
   python: python3.10.12
+
 exclude: |
   (^\.venv/|^venv/|^__pycache__/|^build/|^dist/|
    ^data/|^artifacts/|^models/|^checkpoints/)
+
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
@@ -45,6 +47,9 @@ repos:
           - torch
           - sentence_transformers
           - prometheus_client
+          - tenacity
+          - opentelemetry-instrumentation-fastapi
+          - httpx
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:
@@ -73,6 +78,10 @@ repos:
       - id: taplo-lint
         name: taplo lint (TOML)
         files: ^(pyproject|taplo|\.taplo)\.toml$|\.toml$
+  - repo: https://github.com/lyz-code/yamlfix/
+    rev: 1.19.0
+    hooks:
+      - id: yamlfix
   - repo: https://github.com/ITProKyle/pre-commit-hook-yamlfmt
     rev: v0.4.0
     hooks:
@@ -80,13 +89,13 @@ repos:
         files: ^.*\.(yml|yaml)$
         args:
           - --mapping
-          - "2"
+          - '2'
           - --sequence
-          - "4"
+          - '4'
           - --offset
-          - "2"
+          - '2'
           - --width
-          - "80"
+          - '80'
           - --no-implicit-start
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.37.1
