@@ -44,6 +44,12 @@ prek run --all-files
 
 ## Running the Pipeline
 
+Generate the documents
+
+```bash
+python ./scripts/create_test_docs.py
+```
+
 terminal 1
 
 ```bash
