@@ -211,3 +211,5 @@ documents/
 junit.xml
 faiss_index.bin
 artifacts/
+logs/
+.pipeline_pids.json

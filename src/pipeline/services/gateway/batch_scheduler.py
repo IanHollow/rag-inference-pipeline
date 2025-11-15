@@ -169,7 +169,7 @@ class BatchScheduler(Generic[T]):
         self._pending_futures.clear()
 
         logger.info(
-            "Batch %d ← %d requests (age: %.3fs)",
+            "Batch %d <- %d requests (age: %.3fs)",
             batch.batch_id,
             len(batch),
             time.time() - batch.created_at,
