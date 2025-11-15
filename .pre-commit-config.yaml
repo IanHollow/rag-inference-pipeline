@@ -50,6 +50,7 @@ repos:
           - tenacity
           - opentelemetry-instrumentation-fastapi
           - httpx
+          - pytest_asyncio
   - repo: https://github.com/shellcheck-py/shellcheck-py
     rev: v0.11.0.1
     hooks:
@@ -89,13 +90,13 @@ repos:
         files: ^.*\.(yml|yaml)$
         args:
           - --mapping
-          - '2'
+          - "2"
           - --sequence
-          - '4'
+          - "4"
           - --offset
-          - '2'
+          - "2"
           - --width
-          - '80'
+          - "80"
           - --no-implicit-start
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.37.1
