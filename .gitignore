@@ -209,3 +209,4 @@ __marimo__/
 # Project specific
 documents/
 junit.xml
+faiss_index.bin
