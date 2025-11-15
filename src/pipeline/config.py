@@ -170,6 +170,38 @@ class PipelineSettings(BaseSettings):
         description="Logging level (DEBUG, INFO, WARNING, ERROR, CRITICAL)",
     )
 
+    enable_tracing: bool = Field(
+        default=True,
+        alias="ENABLE_TRACING",
+        description="If true, emit OpenTelemetry spans for pipeline stages",
+    )
+
+    enable_profiling: bool = Field(
+        default=True,
+        alias="ENABLE_PROFILING",
+        description="If true, capture sampled psutil-based profiling snapshots",
+    )
+
+    profiling_sample_rate: float = Field(
+        default=0.2,
+        alias="PROFILING_SAMPLE_RATE",
+        ge=0.0,
+        le=1.0,
+        description="Fraction of requests to capture profiling data for (0-1)",
+    )
+
+    otel_exporter_endpoint: str = Field(
+        default="http://127.0.0.1:4317",
+        alias="OTEL_EXPORTER_OTLP_ENDPOINT",
+        description="OTLP gRPC endpoint for exporting traces",
+    )
+
+    otel_exporter_insecure: bool = Field(
+        default=True,
+        alias="OTEL_EXPORTER_OTLP_INSECURE",
+        description="Use insecure (non-TLS) connection for OTLP exporter",
+    )
+
     # Computed properties
     @property
     def role(self) -> NodeRole:

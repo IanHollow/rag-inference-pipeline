@@ -9,13 +9,11 @@ from collections.abc import Iterator
 from contextlib import contextmanager
 from dataclasses import asdict, dataclass
 import logging
+import secrets
 import time
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 import psutil
-
-if TYPE_CHECKING:
-    from psutil import Process  # noqa: F401
 
 logger = logging.getLogger(__name__)
 
@@ -198,6 +196,55 @@ class StageProfiler:
             "stages": [p.to_dict() for p in self.profiles],
         }
 
+
+class SampledStageProfiler:
+    """
+    Sampling wrapper around StageProfiler to limit profiling overhead.
+    """
+
+    def __init__(
+        self,
+        enabled: bool,
+        sample_rate: float,
+        logger: logging.Logger | None = None,
+    ) -> None:
+        self.logger = logger or logging.getLogger(__name__)
+        self.enabled = enabled and sample_rate > 0
+        self.sample_rate = max(0.0, min(sample_rate, 1.0))
+        self.profiler = StageProfiler() if self._should_sample() else None
+
+    def _should_sample(self) -> bool:
+        return self.enabled and secrets.SystemRandom().random() <= self.sample_rate
+
+    def is_active(self) -> bool:
+        """Return whether profiling is active for the current request."""
+        return self.profiler is not None
+
+    @contextmanager
+    def track(self, stage_name: str, log_results: bool = False) -> Iterator[ProfileResult | None]:
+        """
+        Profile a stage if sampling is active.
+        """
+        if not self.profiler:
+            yield None
+            return
+
+        with profile_context(stage_name, log_results=log_results) as profile:
+            yield profile
+            self.profiler.add(profile)
+
+    def summary(self) -> dict[str, Any] | None:
+        """
+        Return summary of collected samples if profiling was active.
+        """
+        if not self.profiler:
+            return None
+
+        summary = self.profiler.get_summary()
+        self.logger.debug("Profiling summary collected: %s", summary)
+        return summary
+
     def clear(self) -> None:
         """Clear all profiling data."""
-        self.profiles.clear()
+        if self.profiler:
+            self.profiler.profiles.clear()

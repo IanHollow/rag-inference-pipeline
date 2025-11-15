@@ -11,18 +11,30 @@ import time
 
 from fastapi import FastAPI, HTTPException
 from fastapi.responses import Response
-from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
+from opentelemetry import trace
 from prometheus_client import generate_latest
 from pydantic import ValidationError
 
 from ..config import get_settings
-from .gateway.metrics import error_counter, latency_histogram, request_counter
+from ..telemetry import (
+    error_counter as pipeline_error_counter,
+    get_resource_snapshot,
+    instrument_fastapi_app,
+    memory_gauge,
+    request_counter as pipeline_request_counter,
+)
+from .gateway.metrics import (
+    error_counter as gateway_error_counter,
+    latency_histogram,
+    request_counter as gateway_request_counter,
+)
 from .gateway.orchestrator import Orchestrator
 from .gateway.rpc_client import RPCError, RPCTimeoutError
 from .gateway.schemas import QueryRequest, QueryResponse
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+tracer = trace.get_tracer(__name__)
 
 # Global orchestrator instance
 orchestrator: Orchestrator | None = None
@@ -55,8 +67,16 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Instrument with OpenTelemetry
-FastAPIInstrumentor.instrument_app(app)
+instrument_fastapi_app(app)
+
+
+def _record_memory_usage() -> None:
+    """Push current memory stats to Prometheus gauges."""
+    snapshot = get_resource_snapshot()
+    labels = {"node": str(settings.node_number), "service": "gateway"}
+    memory_gauge.labels(**labels, type="rss").set(snapshot.rss)
+    memory_gauge.labels(**labels, type="vms").set(snapshot.vms)
+    memory_gauge.labels(**labels, type="percent").set(snapshot.memory_percent)
 
 
 @app.get("/health")
@@ -87,31 +107,61 @@ async def query(request: QueryRequest) -> QueryResponse:
     start_time = time.time()
 
     try:
+        _record_memory_usage()
+
         # Validate request
         if not request.request_id:
-            error_counter.labels(error_type="validation").inc()
+            gateway_error_counter.labels(error_type="validation").inc()
+            pipeline_error_counter.labels(
+                node=str(settings.node_number),
+                service="gateway",
+                error_type="validation",
+            ).inc()
             raise HTTPException(status_code=400, detail="request_id is required")
 
         if not request.query:
-            error_counter.labels(error_type="validation").inc()
+            gateway_error_counter.labels(error_type="validation").inc()
+            pipeline_error_counter.labels(
+                node=str(settings.node_number),
+                service="gateway",
+                error_type="validation",
+            ).inc()
             raise HTTPException(status_code=400, detail="query is required")
 
         logger.info("Received query: request_id=%s", request.request_id)
 
         # Process through orchestrator
         if orchestrator is None:
-            error_counter.labels(error_type="service_unavailable").inc()
+            gateway_error_counter.labels(error_type="service_unavailable").inc()
+            pipeline_error_counter.labels(
+                node=str(settings.node_number),
+                service="gateway",
+                error_type="service_unavailable",
+            ).inc()
             raise HTTPException(status_code=503, detail="Service not ready")
 
-        response = await orchestrator.process_query(
-            request_id=request.request_id,
-            query=request.query,
-        )
+        with tracer.start_as_current_span(
+            "gateway.query",
+            attributes={
+                "pipeline.request_id": request.request_id,
+                "pipeline.service": "gateway",
+                "pipeline.node": settings.node_number,
+            },
+        ):
+            response = await orchestrator.process_query(
+                request_id=request.request_id,
+                query=request.query,
+            )
 
         # Record metrics
         elapsed = time.time() - start_time
         latency_histogram.observe(elapsed)
-        request_counter.labels(status="success").inc()
+        gateway_request_counter.labels(status="success").inc()
+        pipeline_request_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            status="success",
+        ).inc()
 
         logger.info(
             "Query completed: request_id=%s, latency=%.3fs",
@@ -124,8 +174,18 @@ async def query(request: QueryRequest) -> QueryResponse:
     except RPCTimeoutError as e:
         elapsed = time.time() - start_time
         latency_histogram.observe(elapsed)
-        error_counter.labels(error_type="timeout").inc()
-        request_counter.labels(status="timeout").inc()
+        gateway_error_counter.labels(error_type="timeout").inc()
+        pipeline_error_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            error_type="timeout",
+        ).inc()
+        gateway_request_counter.labels(status="timeout").inc()
+        pipeline_request_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            status="error",
+        ).inc()
 
         logger.error(
             "Query timeout: request_id=%s, latency=%.3fs",
@@ -137,8 +197,18 @@ async def query(request: QueryRequest) -> QueryResponse:
     except RPCError as e:
         elapsed = time.time() - start_time
         latency_histogram.observe(elapsed)
-        error_counter.labels(error_type="rpc_error").inc()
-        request_counter.labels(status="error").inc()
+        gateway_error_counter.labels(error_type="rpc_error").inc()
+        pipeline_error_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            error_type="rpc_error",
+        ).inc()
+        gateway_request_counter.labels(status="error").inc()
+        pipeline_request_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            status="error",
+        ).inc()
 
         logger.exception(
             "Query RPC error: request_id=%s, latency=%.3fs",
@@ -150,8 +220,18 @@ async def query(request: QueryRequest) -> QueryResponse:
     except ValidationError as e:
         elapsed = time.time() - start_time
         latency_histogram.observe(elapsed)
-        error_counter.labels(error_type="validation").inc()
-        request_counter.labels(status="error").inc()
+        gateway_error_counter.labels(error_type="validation").inc()
+        pipeline_error_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            error_type="validation",
+        ).inc()
+        gateway_request_counter.labels(status="error").inc()
+        pipeline_request_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            status="error",
+        ).inc()
 
         logger.error(
             "Query validation error: request_id=%s, latency=%.3fs",
@@ -163,8 +243,18 @@ async def query(request: QueryRequest) -> QueryResponse:
     except Exception as e:
         elapsed = time.time() - start_time
         latency_histogram.observe(elapsed)
-        error_counter.labels(error_type="unknown").inc()
-        request_counter.labels(status="error").inc()
+        gateway_error_counter.labels(error_type="unknown").inc()
+        pipeline_error_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            error_type="unknown",
+        ).inc()
+        gateway_request_counter.labels(status="error").inc()
+        pipeline_request_counter.labels(
+            node=str(settings.node_number),
+            service="gateway",
+            status="error",
+        ).inc()
 
         logger.exception(
             "Query unexpected error: request_id=%s, latency=%.3fs",
@@ -175,6 +265,7 @@ async def query(request: QueryRequest) -> QueryResponse:
 
 
 @app.get("/metrics")
+@app.head("/metrics")
 async def metrics() -> Response:
     """Prometheus metrics endpoint."""
     return Response(
