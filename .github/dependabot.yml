@@ -1,5 +1,6 @@
 ---
 version: 2
+
 updates:
   # Keep GitHub Actions up to date
   - package-ecosystem: github-actions
@@ -11,8 +12,7 @@ updates:
       # Group related updates into a single PR
     groups:
       actions-minor-patch:
-        patterns:
-          - "*"
+        patterns: ["*"]
         update-types: [minor, patch]
     open-pull-requests-limit: 5
     labels: [dependencies, github-actions]

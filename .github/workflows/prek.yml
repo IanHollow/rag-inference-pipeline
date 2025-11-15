@@ -1,10 +1,11 @@
 ---
 name: Prek Checks
-"on":
+on:  # yamllint disable-line rule:truthy
   push:
     branches: [main, develop]
   pull_request:
     branches: [main, develop]
+
 jobs:
   prek:
     runs-on: ubuntu-latest
