@@ -210,3 +210,4 @@ __marimo__/
 documents/
 junit.xml
 faiss_index.bin
+artifacts/
