@@ -35,7 +35,7 @@ def create_gateway_app() -> FastAPI:
     Returns:
         FastAPI: Configured FastAPI application for gateway
     """
-    from .services.gateway import app
+    from .services.gateway_app import app
 
     return app
 
