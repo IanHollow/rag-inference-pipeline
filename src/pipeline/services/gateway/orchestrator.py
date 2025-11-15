@@ -6,9 +6,17 @@ import json
 import logging
 import time
 
+from opentelemetry import trace
+
 from ...config import get_settings
 from ...enums import ServiceEndpoint
-from ...telemetry import batch_size_histogram, latency_histogram, rpc_duration_histogram
+from ...telemetry import (
+    SampledStageProfiler,
+    batch_size_histogram,
+    latency_histogram,
+    rpc_duration_histogram,
+    stage_duration_gauge,
+)
 from .batch_scheduler import Batch, BatchScheduler
 from .rpc_client import RPCClient, RPCError
 from .schemas import (
@@ -22,6 +30,7 @@ from .schemas import (
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
+tracer = trace.get_tracer(__name__)
 
 
 class Orchestrator:
@@ -95,7 +104,15 @@ class Orchestrator:
 
         try:
             # Enqueue and wait for batch processing
-            result = await self.batch_scheduler.enqueue(pending_request)
+            with tracer.start_as_current_span(
+                "gateway.process_query",
+                attributes={
+                    "pipeline.request_id": request_id,
+                    "pipeline.service": "gateway",
+                    "pipeline.node": settings.node_number,
+                },
+            ):
+                result = await self.batch_scheduler.enqueue(pending_request)
 
             elapsed = time.time() - start_time
             logger.info(
@@ -137,10 +154,15 @@ class Orchestrator:
             len(batch),
         )
 
-        # Record batch size metric
-        batch_size_histogram.labels(node=str(settings.node_number), service="gateway").observe(
-            len(batch)
+        profiler = SampledStageProfiler(
+            enabled=settings.enable_profiling,
+            sample_rate=settings.profiling_sample_rate,
+            logger=logger,
         )
+        node_label = str(settings.node_number)
+
+        # Record batch size metric
+        batch_size_histogram.labels(node=node_label, service="gateway").observe(len(batch))
 
         # Step 1: Retrieve documents from Node 1
         retrieval_start = time.time()
@@ -152,11 +174,15 @@ class Orchestrator:
             for req in batch.requests
         ]
 
-        retrieval_responses = await self._call_retrieval_service(
-            batch.batch_id,
-            retrieval_requests,
+        with profiler.track("gateway.retrieval_rpc"):
+            retrieval_responses = await self._call_retrieval_service(
+                batch.batch_id,
+                retrieval_requests,
+            )
+        retrieval_duration = time.time() - retrieval_start
+        stage_duration_gauge.labels(node=node_label, stage="gateway.retrieval_rpc").set(
+            retrieval_duration
         )
-        retrieval_duration = (time.time() - retrieval_start) * 1000  # ms
 
         # Step 2: Generate responses from Node 2
         generation_start = time.time()
@@ -169,11 +195,15 @@ class Orchestrator:
             for req, resp in zip(batch.requests, retrieval_responses, strict=False)
         ]
 
-        generation_responses = await self._call_generation_service(
-            batch.batch_id,
-            generation_requests,
+        with profiler.track("gateway.generation_rpc"):
+            generation_responses = await self._call_generation_service(
+                batch.batch_id,
+                generation_requests,
+            )
+        generation_duration = time.time() - generation_start
+        stage_duration_gauge.labels(node=node_label, stage="gateway.generation_rpc").set(
+            generation_duration
         )
-        generation_duration = (time.time() - generation_start) * 1000  # ms
 
         # Step 3: Build final responses
         final_responses = [
@@ -186,7 +216,18 @@ class Orchestrator:
             for gen_resp in generation_responses
         ]
 
-        batch_elapsed_ms = (time.time() - batch_start) * 1000
+        batch_elapsed = time.time() - batch_start
+
+        if summary := profiler.summary():
+            logger.info(
+                json.dumps(
+                    {
+                        "event": "gateway_profile",
+                        "batch_id": batch.batch_id,
+                        "summary": summary,
+                    }
+                )
+            )
 
         # Structured log for profiling analysis
         logger.info(
@@ -195,18 +236,16 @@ class Orchestrator:
                     "event": "batch_completed",
                     "batch_id": batch.batch_id,
                     "size": len(batch),
-                    "latency_ms": round(batch_elapsed_ms, 2),
-                    "node1_ms": round(retrieval_duration, 2),
-                    "node2_ms": round(generation_duration, 2),
+                    "latency_ms": round(batch_elapsed * 1000, 2),
+                    "node1_ms": round(retrieval_duration * 1000, 2),
+                    "node2_ms": round(generation_duration * 1000, 2),
                     "timestamp": batch_start,
                 }
             )
         )
 
         # Record latency metric
-        latency_histogram.labels(node=str(settings.node_number), service="gateway").observe(
-            batch_elapsed_ms / 1000
-        )
+        latency_histogram.labels(node=node_label, service="gateway").observe(batch_elapsed)
 
         return final_responses
 
@@ -241,11 +280,19 @@ class Orchestrator:
             }
 
             rpc_start = time.time()
-            response_data = await self.retrieval_client.post(
-                ServiceEndpoint.RETRIEVE.value,
-                payload,
-            )
-            rpc_duration = time.time() - rpc_start
+            with tracer.start_as_current_span(
+                "gateway.call_retrieval",
+                attributes={
+                    "pipeline.batch_id": batch_id,
+                    "pipeline.service": "gateway",
+                    "pipeline.node": settings.node_number,
+                },
+            ):
+                response_data = await self.retrieval_client.post(
+                    ServiceEndpoint.RETRIEVE.value,
+                    payload,
+                )
+                rpc_duration = time.time() - rpc_start
 
             # Record RPC duration
             rpc_duration_histogram.labels(
@@ -302,11 +349,19 @@ class Orchestrator:
             }
 
             rpc_start = time.time()
-            response_data = await self.generation_client.post(
-                ServiceEndpoint.GENERATE.value,
-                payload,
-            )
-            rpc_duration = time.time() - rpc_start
+            with tracer.start_as_current_span(
+                "gateway.call_generation",
+                attributes={
+                    "pipeline.batch_id": batch_id,
+                    "pipeline.service": "gateway",
+                    "pipeline.node": settings.node_number,
+                },
+            ):
+                response_data = await self.generation_client.post(
+                    ServiceEndpoint.GENERATE.value,
+                    payload,
+                )
+                rpc_duration = time.time() - rpc_start
 
             # Record RPC duration
             rpc_duration_histogram.labels(

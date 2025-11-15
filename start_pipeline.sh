@@ -7,7 +7,10 @@ echo ""
 # Load shared environment variables
 if [ -f .env.shared ]; then
 	echo "Loading shared environment from .env.shared"
-	export "$(grep -v '^#' .env.shared | grep '^export ' | sed 's/^export //' | xargs)"
+	set -a
+	# shellcheck disable=SC1091
+	source .env.shared
+	set +a
 else
 	echo "Warning: .env.shared not found, using default values"
 fi
@@ -17,7 +20,7 @@ mkdir -p logs
 
 # Activate virtual environment
 if [ ! -d ".venv" ]; then
-	echo "❌ Virtual environment not found. Run ./install.sh first."
+	echo "Virtual environment not found. Run ./install.sh first."
 	exit 1
 fi
 

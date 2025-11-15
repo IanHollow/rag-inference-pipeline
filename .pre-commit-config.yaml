@@ -49,6 +49,9 @@ repos:
           - prometheus_client
           - tenacity
           - opentelemetry-instrumentation-fastapi
+          - opentelemetry-instrumentation-httpx
+          - opentelemetry-sdk
+          - opentelemetry-exporter-otlp
           - httpx
           - pytest_asyncio
           - types-psutil
@@ -91,13 +94,13 @@ repos:
         files: ^.*\.(yml|yaml)$
         args:
           - --mapping
-          - "2"
+          - '2'
           - --sequence
-          - "4"
+          - '4'
           - --offset
-          - "2"
+          - '2'
           - --width
-          - "80"
+          - '80'
           - --no-implicit-start
   - repo: https://github.com/adrienverge/yamllint
     rev: v1.37.1

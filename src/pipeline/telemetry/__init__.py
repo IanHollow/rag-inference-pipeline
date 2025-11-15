@@ -14,22 +14,27 @@ from .metrics import (
 from .profiling import (
     ProfileResult,
     ResourceSnapshot,
+    SampledStageProfiler,
     StageProfiler,
     get_resource_snapshot,
     profile_context,
 )
+from .tracing import instrument_fastapi_app, setup_tracing
 
 __all__ = [
     "ProfileResult",
     "ResourceSnapshot",
+    "SampledStageProfiler",
     "StageProfiler",
     "batch_size_histogram",
     "error_counter",
     "get_resource_snapshot",
+    "instrument_fastapi_app",
     "latency_histogram",
     "memory_gauge",
     "profile_context",
     "request_counter",
     "rpc_duration_histogram",
+    "setup_tracing",
     "stage_duration_gauge",
 ]

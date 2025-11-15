@@ -14,6 +14,7 @@ import uvicorn
 
 from .config import get_settings
 from .enums import NodeRole
+from .telemetry import setup_tracing
 
 # Configure logging
 logging.basicConfig(
@@ -124,6 +125,9 @@ def main() -> None:
     try:
         # Load configuration
         settings = get_settings()
+
+        # Initialize tracing before apps/modules are imported
+        setup_tracing(settings, service_name=f"pipeline-{settings.role.value}")
 
         # Configure logging level from settings
         logging.getLogger().setLevel(settings.log_level)
