@@ -61,6 +61,10 @@ _the client.py runs using the system install python and requires that the system
 
 First install Docker or Podman (_Podman can replace any Docker command_). You might also need to install Docker compose or Podman compose as well.
 
+Run the profiling service
+
 ```bash
 docker compose -f monitoring/docker-compose.yml up
 ```
+
+Access the profiling service frontend by going to http://localhost:3000
