@@ -248,31 +248,51 @@ class TestOrchestrator:
         retrieval_mock: MagicMock = orchestrator.retrieval_client  # type: ignore[assignment]
         generation_mock: MagicMock = orchestrator.generation_client  # type: ignore[assignment]
 
-        # Mock retrieval response
+        # Mock retrieval response (batch API format)
         retrieval_response_data = {
-            "responses": [
+            "batch_id": "1",
+            "items": [
                 {
                     "request_id": "test_001",
-                    "doc_ids": [1, 2, 3],
-                    "documents": [
-                        {"doc_id": 1, "title": "Doc 1", "content": "Content 1", "category": "A"},
-                        {"doc_id": 2, "title": "Doc 2", "content": "Content 2", "category": "B"},
-                        {"doc_id": 3, "title": "Doc 3", "content": "Content 3", "category": "C"},
+                    "docs": [
+                        {
+                            "doc_id": 1,
+                            "title": "Doc 1",
+                            "content": "Content 1",
+                            "category": "A",
+                            "score": 0.9,
+                        },
+                        {
+                            "doc_id": 2,
+                            "title": "Doc 2",
+                            "content": "Content 2",
+                            "category": "B",
+                            "score": 0.85,
+                        },
+                        {
+                            "doc_id": 3,
+                            "title": "Doc 3",
+                            "content": "Content 3",
+                            "category": "C",
+                            "score": 0.8,
+                        },
                     ],
                 }
-            ]
+            ],
         }
 
-        # Mock generation response
+        # Mock generation response (batch API format)
         generation_response_data = {
-            "responses": [
+            "batch_id": "1",
+            "items": [
                 {
                     "request_id": "test_001",
                     "generated_response": "This is a test response",
                     "sentiment": "positive",
                     "is_toxic": "false",
                 }
-            ]
+            ],
+            "processing_time": 0.1,
         }
 
         # Configure mock return values
@@ -374,28 +394,38 @@ class TestSchemas:
         """Test RetrievalResponse validation."""
         response = RetrievalResponse(
             request_id="test_001",
-            doc_ids=[1, 2, 3],
-            documents=[
-                {"doc_id": 1, "title": "Doc 1", "content": "Content 1", "category": "A"},
-                {"doc_id": 2, "title": "Doc 2", "content": "Content 2", "category": "B"},
+            docs=[
+                {
+                    "doc_id": 1,
+                    "title": "Doc 1",
+                    "content": "Content 1",
+                    "category": "A",
+                    "score": 0.9,
+                },
+                {
+                    "doc_id": 2,
+                    "title": "Doc 2",
+                    "content": "Content 2",
+                    "category": "B",
+                    "score": 0.8,
+                },
             ],
         )
 
         assert response.request_id == "test_001"
-        assert len(response.doc_ids) == 3
-        assert len(response.documents) == 2
+        assert len(response.docs) == 2
 
     def test_generation_request_validation(self) -> None:
         """Test GenerationRequest validation."""
         request = GenerationRequest(
             request_id="test_001",
             query="test query",
-            documents=[{"doc_id": 1, "title": "Doc 1", "content": "Content 1", "category": "A"}],
+            docs=[{"doc_id": 1, "title": "Doc 1", "content": "Content 1", "category": "A"}],
         )
 
         assert request.request_id == "test_001"
         assert request.query == "test query"
-        assert len(request.documents) == 1
+        assert len(request.docs) == 1
 
     def test_generation_response_validation(self) -> None:
         """Test GenerationResponse validation."""
