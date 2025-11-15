@@ -8,9 +8,10 @@ from __future__ import annotations
 
 import logging
 import time
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, cast
 
 import torch
+import torch.nn as nn
 from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
 
 if TYPE_CHECKING:
@@ -59,23 +60,28 @@ class LLMGenerator:
 
         try:
             # Load tokenizer with caching
-            self.tokenizer = AutoTokenizer.from_pretrained(
+            tokenizer: PreTrainedTokenizerBase = AutoTokenizer.from_pretrained(
                 self.model_name,
                 use_fast=True,
             )
 
             # Ensure pad token is set
-            if self.tokenizer.pad_token is None:
-                self.tokenizer.pad_token = self.tokenizer.eos_token
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            self.tokenizer = tokenizer
 
             # Load model with appropriate dtype
-            self.model = AutoModelForCausalLM.from_pretrained(
+            model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
-                low_cpu_mem_usage=True,
-                device_map=str(self.device),
+                # TODO: look into re-enabling these options which require the accelerate python package
+                # low_cpu_mem_usage=True,
+                # device_map=str(self.device),
             )
-            self.model.eval()
+
+            cast("nn.Module", model).to(self.device)
+            model.eval()
+            self.model = model
             self._loaded = True
 
             elapsed = time.time() - start_time
