@@ -310,7 +310,7 @@ class TestRetrievalSchemas:
         doc = RetrievalDocument(
             doc_id=1,
             title="Test",
-            snippet="Content",
+            content="Content",
             score=0.95,
         )
         assert doc.doc_id == 1
@@ -325,7 +325,7 @@ class TestRetrievalSchemas:
             items=[
                 RetrievalResponseItem(
                     request_id="req_1",
-                    docs=[RetrievalDocument(doc_id=1, title="Test", snippet="Content", score=0.95)],
+                    docs=[RetrievalDocument(doc_id=1, title="Test", content="Content", score=0.95)],
                 )
             ],
         )
