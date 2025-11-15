@@ -7,7 +7,7 @@ import numpy as np
 
 # Allow configuration via environment variables for flexibility
 DOCUMENTS_DIR = os.environ.get("DOCUMENTS_DIR", "documents/")
-FAISS_INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", str(Path(DOCUMENTS_DIR) / "faiss_index.bin"))
+FAISS_INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", "faiss_index.bin")
 NUM_DOCUMENTS = 4500000
 
 
@@ -85,8 +85,7 @@ def _create_faiss_index() -> None:
     index = faiss.IndexIVFFlat(quantizer, dim, nlist, faiss.METRIC_L2)
     rng = np.random.default_rng()
     training_data = rng.standard_normal((10000, dim)).astype("float32")
-    n, x = training_data
-    index.train(n, x)
+    index.train(training_data)
     # Add vectors in batches to manage memory
     batch_size = 10000
     for i in range(0, NUM_DOCUMENTS, batch_size):
@@ -94,8 +93,7 @@ def _create_faiss_index() -> None:
         batch_embeddings = rng.standard_normal((min(batch_size, NUM_DOCUMENTS - i), dim)).astype(
             "float32"
         )
-        n, x = batch_embeddings
-        index.add(n, x)
+        index.add(batch_embeddings)
 
         if (i > 0 and i % (batch_size * 10) == 0) or i == 0:
             print(f"Added {i}/{NUM_DOCUMENTS} vectors to index...")
@@ -113,6 +111,6 @@ if __name__ == "__main__":
     print()
     _initialize_documents()
     _create_faiss_index()
-    print("\n✅ Setup complete!")
-    print(f"   - Documents DB: {Path(DOCUMENTS_DIR) / 'documents.db'}")
-    print(f"   - FAISS index: {FAISS_INDEX_PATH}")
+    print("\nSetup complete!")
+    print(f"    - Documents DB: {Path(DOCUMENTS_DIR) / 'documents.db'}")
+    print(f"    - FAISS index: {FAISS_INDEX_PATH}")
