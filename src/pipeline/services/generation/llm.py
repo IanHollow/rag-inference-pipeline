@@ -195,7 +195,7 @@ class LLMGenerator:
         with torch.no_grad():
             if self.device.type == "cuda":
                 with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                    generated_ids = generate_fn(  # type: ignore[operator]
+                    generated_ids = generate_fn(
                         input_ids=model_inputs["input_ids"],
                         attention_mask=model_inputs.get("attention_mask"),
                         max_new_tokens=self.settings.max_tokens,
@@ -204,7 +204,7 @@ class LLMGenerator:
                         do_sample=False,
                     )
             else:
-                generated_ids = generate_fn(  # type: ignore[operator]
+                generated_ids = generate_fn(
                     input_ids=model_inputs["input_ids"],
                     attention_mask=model_inputs.get("attention_mask"),
                     max_new_tokens=self.settings.max_tokens,
