@@ -27,6 +27,10 @@ fi
 # shellcheck disable=SC1091
 source .venv/bin/activate
 
+# Ensure the project's src/ is on PYTHONPATH so `python -m pipeline.runtime` works
+PYTHONPATH_VALUE="$(pwd)/src:${PYTHONPATH:-}"
+export PYTHONPATH="$PYTHONPATH_VALUE"
+
 echo "Logs will be written to:"
 echo "    - logs/node0-gateway.log"
 echo "    - logs/node1-retrieval.log"
