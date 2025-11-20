@@ -53,7 +53,7 @@ python ./scripts/create_test_docs.py
 terminal 1
 
 ```bash
-./run_pipeline.sh
+./start_pipeline.sh
 ```
 
 terminal 2
