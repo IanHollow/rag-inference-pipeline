@@ -40,6 +40,9 @@ services:
       - GF_AUTH_ANONYMOUS_ENABLED=false
       - GF_PATHS_PROVISIONING=/etc/grafana/provisioning
       - GF_PATHS_DATA=/var/lib/grafana
+      - GF_RENDERING_SERVER_URL=http://renderer:8081/render
+      - GF_RENDERING_CALLBACK_URL=http://grafana:3000/
+      - GF_LOG_FILTERS=rendering:debug
     volumes:
       - grafana-storage:/var/lib/grafana:z
       - ./grafana/provisioning:/etc/grafana/provisioning:ro,z
@@ -49,6 +52,8 @@ services:
         condition: service_healthy
       loki:
         condition: service_healthy
+      renderer:
+        condition: service_started
       tempo:
         condition: service_healthy
     healthcheck:
@@ -57,6 +62,22 @@ services:
       timeout: 10s
       retries: 3
       start_period: 30s
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+          cpus: '0.5'
+        reservations:
+          memory: 256M
+          cpus: '0.25'
+
+  renderer:
+    image: grafana/grafana-image-renderer:latest
+    restart: on-failure:3
+    ports: [8081]
+    networks: [monitoring]
+    environment:
+      ENABLE_METRICS: 'true'
     deploy:
       resources:
         limits:
