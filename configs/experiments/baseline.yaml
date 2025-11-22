@@ -1,0 +1,31 @@
+---
+run_id: baseline_reference
+description: >
+  Current three-node baseline used as the control configuration.
+  Gateway batches requests, Node 1 handles embedding+retrieval, Node 2 handles
+  generation.
+
+nodes:
+  - number: 0
+    profile: configs/baseline_gateway.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retrieval.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 8
+  - number: 2
+    profile: configs/generation.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 60
+  concurrency: 1
+  rate_limit: 0.2  # seconds between client requests
+  timeout: 300
+
+notes: |-
+  Serves as the baseline for comparing all other experiments. Use this run to
+  capture per-node RSS, latency distribution, and stage durations for reference.

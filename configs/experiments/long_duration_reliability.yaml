@@ -1,0 +1,31 @@
+---
+run_id: long_duration_reliability
+description: >
+  Reliability burn-in using the preferred topology to ensure zero errors or
+  memory leaks over an extended workload. Provides data for the Tier 2 report
+  reliability section.
+
+nodes:
+  - number: 0
+    profile: configs/baseline_gateway.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retriever_with_rerank.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 8
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 600
+  concurrency: 1
+  rate_limit: 0.1
+  timeout: 600
+
+notes: |-
+  Capture success rate, memory growth, and average CPU utilization across the
+  long run. Use the resulting artifacts to demonstrate operational stability.

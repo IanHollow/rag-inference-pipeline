@@ -10,7 +10,7 @@ from pathlib import Path
 import faiss
 import numpy as np
 
-from ...config import PipelineSettings
+from ..config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 

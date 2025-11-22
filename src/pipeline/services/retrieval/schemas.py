@@ -10,6 +10,7 @@ class RetrievalRequestItem(BaseModel):
 
     request_id: str = Field(..., description="Unique identifier for this request")
     query: str = Field(..., description="Query text to process")
+    embedding: list[float] | None = Field(None, description="Pre-computed embedding vector")
 
 
 class RetrievalRequest(BaseModel):

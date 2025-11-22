@@ -5,10 +5,10 @@ This module uses Pydantic Settings to load configuration from environment variab
 required by the project spec.
 """
 
-from pydantic import Field, field_validator, model_validator
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .enums import NodeRole, derive_node_role
+from ..enums import NodeRole, derive_node_role
 
 
 class PipelineSettings(BaseSettings):
@@ -288,18 +288,6 @@ class PipelineSettings(BaseSettings):
         if v_upper not in valid_levels:
             raise ValueError(f"log_level must be one of {valid_levels} (got {v})")
         return v_upper
-
-    @model_validator(mode="after")
-    def set_default_role_profile(self) -> "PipelineSettings":
-        """Set default pipeline_role_profile based on node_number if not provided."""
-        if not self.pipeline_role_profile:
-            if self.node_number == 0:
-                self.pipeline_role_profile = "baseline_gateway"
-            elif self.node_number == 1:
-                self.pipeline_role_profile = "retrieval"
-            elif self.node_number == 2:
-                self.pipeline_role_profile = "generation"
-        return self
 
 
 # Global settings instance

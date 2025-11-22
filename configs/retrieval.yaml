@@ -1,0 +1,15 @@
+---
+name: retrieval
+description: Retrieval node with Embedding, FAISS, and Document Store
+
+components:
+  - name: embedding_generator
+    type: embedding
+  - name: faiss_store
+    type: faiss
+  - name: document_store
+    type: document_store
+
+routes:
+  - prefix: /retrieve
+    target: retrieval

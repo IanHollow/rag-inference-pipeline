@@ -1,0 +1,16 @@
+---
+name: gateway_with_embedding
+description: Gateway Node with Embedding
+
+components:
+  - name: orchestrator
+    type: gateway
+    config:
+      retrieval_url: http://localhost:8001
+      generation_url: http://localhost:8002
+  - name: embedding_generator
+    type: embedding
+
+routes:
+  - prefix: /
+    target: gateway

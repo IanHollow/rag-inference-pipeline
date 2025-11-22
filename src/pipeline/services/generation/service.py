@@ -1,415 +1,190 @@
 """
-Generation service - Node 2
+Generation Service Layer.
 
-Handles reranking, LLM generation, sentiment analysis, and toxicity filtering.
+Encapsulates the business logic for the generation pipeline:
+Reranking -> LLM Generation -> Sentiment Analysis -> Toxicity Filtering.
 """
 
-from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 import json
 import logging
 import time
 
-from fastapi import FastAPI, HTTPException, status
-from fastapi.responses import Response
 from opentelemetry import trace
-from prometheus_client import Counter, Histogram, generate_latest
 
+from ...components.llm import LLMGenerator
+from ...components.reranker import Reranker
+from ...components.sentiment import SentimentAnalyzer
+from ...components.toxicity import ToxicityFilter
 from ...config import get_settings
 from ...telemetry import (
     SampledStageProfiler,
     batch_size_histogram as pipeline_batch_size_histogram,
-    error_counter as pipeline_error_counter,
-    get_resource_snapshot,
-    instrument_fastapi_app,
     latency_histogram as pipeline_latency_histogram,
-    memory_gauge,
     request_counter as pipeline_request_counter,
     stage_duration_gauge,
 )
-from .llm import LLMGenerator
-from .reranker import Reranker
+from .metrics import (
+    generation_batch_size,
+    generation_request_duration,
+    generation_requests_total,
+    llm_generation_duration,
+    rerank_duration,
+    sentiment_duration,
+    toxicity_duration,
+)
 from .schemas import (
-    ErrorResponse,
     GenerationRequest,
     GenerationResponse,
     GenerationResponseItem,
-    HealthResponse,
-    StageMetrics,
+    RerankedDocument,
 )
-from .sentiment import SentimentAnalyzer
-from .toxicity import ToxicityFilter
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
-)
 logger = logging.getLogger(__name__)
-
-# Global state
 settings = get_settings()
 NODE_LABEL = str(settings.node_number)
 tracer = trace.get_tracer(__name__)
-reranker: Reranker | None = None
-llm_generator: LLMGenerator | None = None
-sentiment_analyzer: SentimentAnalyzer | None = None
-toxicity_filter: ToxicityFilter | None = None
-
-# Prometheus metrics
-generation_requests_total = Counter(
-    "generation_requests_total",
-    "Total number of generation requests",
-)
-
-generation_request_duration = Histogram(
-    "generation_request_duration_seconds",
-    "Generation request duration in seconds",
-    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0, 60.0],
-)
-
-generation_batch_size = Histogram(
-    "generation_batch_size",
-    "Number of items in generation batch",
-    buckets=[1, 2, 4, 8, 16, 32],
-)
-
-rerank_duration = Histogram(
-    "rerank_duration_seconds",
-    "Reranking duration in seconds",
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
-)
-
-llm_generation_duration = Histogram(
-    "llm_generation_duration_seconds",
-    "LLM generation duration in seconds",
-    buckets=[0.5, 1.0, 2.0, 5.0, 10.0, 30.0],
-)
-
-sentiment_duration = Histogram(
-    "sentiment_duration_seconds",
-    "Sentiment analysis duration in seconds",
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
-)
-
-toxicity_duration = Histogram(
-    "toxicity_duration_seconds",
-    "Toxicity filtering duration in seconds",
-    buckets=[0.1, 0.5, 1.0, 2.0, 5.0],
-)
 
 
-@asynccontextmanager
-async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-    """
-    Lifespan context manager for service initialization and cleanup.
+class GenerationService:
+    def __init__(
+        self,
+        reranker: Reranker | None,
+        llm_generator: LLMGenerator,
+        sentiment_analyzer: SentimentAnalyzer,
+        toxicity_filter: ToxicityFilter,
+    ) -> None:
+        self.reranker = reranker
+        self.llm_generator = llm_generator
+        self.sentiment_analyzer = sentiment_analyzer
+        self.toxicity_filter = toxicity_filter
 
-    Loads all models on startup, cleans up on shutdown.
-    """
-    global reranker, llm_generator, sentiment_analyzer, toxicity_filter
-
-    logger.info("=" * 60)
-    logger.info("GENERATION SERVICE STARTING")
-    logger.info("=" * 60)
-    logger.info("Node: %d/%d", settings.node_number, settings.total_nodes)
-    logger.info("Role: %s", settings.role.value)
-    logger.info("=" * 60)
-
-    try:
-        # Initialize and load reranker
-        logger.info("Initializing reranker...")
-        reranker = Reranker(settings)
-        reranker.load()
-        logger.info("Reranker loaded")
-
-        # Initialize and load LLM
-        logger.info("Initializing LLM generator...")
-        llm_generator = LLMGenerator(settings)
-        llm_generator.load()
-        logger.info("LLM generator loaded")
-
-        # Initialize and load sentiment analyzer
-        logger.info("Initializing sentiment analyzer...")
-        sentiment_analyzer = SentimentAnalyzer(settings)
-        sentiment_analyzer.load()
-        logger.info("Sentiment analyzer loaded")
-
-        # Initialize and load toxicity filter
-        logger.info("Initializing toxicity filter...")
-        toxicity_filter = ToxicityFilter(settings)
-        toxicity_filter.load()
-        logger.info("Toxicity filter loaded")
-
-        logger.info("=" * 60)
-        logger.info("GENERATION SERVICE READY")
-        logger.info("All models loaded and resident in memory")
-        logger.info("=" * 60)
-
-        yield
-
-    except Exception as e:
-        logger.exception("Failed to initialize generation service: %s", e)
-        raise
-
-    finally:
-        # Cleanup
-        logger.info("Shutting down generation service...")
-
-        if reranker is not None:
-            reranker.unload()
-
-        if llm_generator is not None:
-            llm_generator.unload()
-
-        if sentiment_analyzer is not None:
-            sentiment_analyzer.unload()
-
-        if toxicity_filter is not None:
-            toxicity_filter.unload()
-
-        logger.info("Generation service shutdown complete")
-
-
-# Create FastAPI app
-app = FastAPI(
-    title="Generation Service",
-    description="Node 2: Reranking, LLM generation, sentiment, and toxicity filtering",
-    version="1.0.0",
-    lifespan=lifespan,
-)
-
-instrument_fastapi_app(app)
-
-
-def _record_memory_usage() -> None:
-    snapshot = get_resource_snapshot()
-    memory_gauge.labels(node=NODE_LABEL, service="generation", type="rss").set(snapshot.rss)
-    memory_gauge.labels(node=NODE_LABEL, service="generation", type="vms").set(snapshot.vms)
-    memory_gauge.labels(
-        node=NODE_LABEL,
-        service="generation",
-        type="percent",
-    ).set(snapshot.memory_percent)
-
-
-def _record_pipeline_error(error_type: str) -> None:
-    pipeline_error_counter.labels(
-        node=NODE_LABEL,
-        service="generation",
-        error_type=error_type,
-    ).inc()
-    pipeline_request_counter.labels(
-        node=NODE_LABEL,
-        service="generation",
-        status="error",
-    ).inc()
-
-
-@app.get("/health")
-async def health() -> HealthResponse:
-    """
-    Health check endpoint.
-
-    Returns service status and whether all models are loaded.
-    """
-    models_loaded = (
-        reranker is not None
-        and reranker.is_loaded
-        and llm_generator is not None
-        and llm_generator.is_loaded
-        and sentiment_analyzer is not None
-        and sentiment_analyzer.is_loaded
-        and toxicity_filter is not None
-        and toxicity_filter.is_loaded
-    )
-
-    return HealthResponse(
-        status="healthy" if models_loaded else "initializing",
-        node=settings.node_number,
-        role=settings.role.value,
-        total_nodes=settings.total_nodes,
-        models_loaded=models_loaded,
-    )
-
-
-@app.post("/generate", responses={500: {"model": ErrorResponse}})
-async def generate(request: GenerationRequest) -> GenerationResponse:
-    """
-    Generate responses for a batch of queries.
-
-    Args:
-        request: Batch generation request containing queries and documents
-
-    Returns:
-        GenerationResponse with processed items
-
-    Raises:
-        HTTPException: If models are not loaded or processing fails
-    """
-    _record_memory_usage()
-
-    profiler = SampledStageProfiler(
-        enabled=settings.enable_profiling,
-        sample_rate=settings.profiling_sample_rate,
-        logger=logger,
-    )
-
-    # Validate models are loaded
-    if (
-        reranker is None
-        or not reranker.is_loaded
-        or llm_generator is None
-        or not llm_generator.is_loaded
-        or sentiment_analyzer is None
-        or not sentiment_analyzer.is_loaded
-        or toxicity_filter is None
-        or not toxicity_filter.is_loaded
-    ):
-        _record_pipeline_error("models_not_loaded")
-        raise HTTPException(
-            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Models not loaded yet",
+    def process_batch(self, generation_request: GenerationRequest) -> GenerationResponse:
+        """
+        Process a batch of generation requests.
+        """
+        profiler = SampledStageProfiler(
+            enabled=settings.enable_profiling,
+            sample_rate=settings.profiling_sample_rate,
+            logger=logger,
         )
 
-    # Update metrics
-    generation_requests_total.inc()
-    batch_size = len(request.items)
-    generation_batch_size.observe(batch_size)
-    pipeline_batch_size_histogram.labels(node=NODE_LABEL, service="generation").observe(batch_size)
+        start_time = time.time()
+        batch_size = len(generation_request.items)
+        generation_requests_total.inc()
+        generation_batch_size.observe(batch_size)
+        pipeline_batch_size_histogram.labels(
+            run_id=settings.profiling_run_id, node=NODE_LABEL, service="generation"
+        ).observe(batch_size)
 
-    logger.info("=" * 60)
-    logger.info("Processing generation batch: %s", request.batch_id)
-    logger.info("Batch size: %d", batch_size)
-    logger.info("=" * 60)
+        logger.info(
+            "Processing generation batch: %s with %d items", generation_request.batch_id, batch_size
+        )
 
-    start_time = time.time()
-    stage_metrics: list[StageMetrics] = []
-
-    try:
         with tracer.start_as_current_span(
             "generation.batch",
             attributes={
-                "pipeline.batch_id": request.batch_id,
+                "pipeline.batch_id": generation_request.batch_id,
                 "pipeline.service": "generation",
                 "pipeline.node": settings.node_number,
             },
         ):
-            # Extract queries and documents
-            queries = [item.query for item in request.items]
-            documents_batch = [list(item.docs) for item in request.items]
+            response_items: list[GenerationResponseItem] = []
 
-            # Stage 1: Rerank documents
-            logger.info("[Stage 1/4] Reranking documents...")
-            rerank_start = time.time()
+            for item in generation_request.items:
+                # Step 1: Rerank documents
+                rerank_start = time.time()
+                with (
+                    tracer.start_as_current_span("generation.rerank"),
+                    profiler.track("generation.rerank"),
+                ):
+                    if self.reranker:
+                        # Convert RetrievalDocument to dict or whatever reranker expects
+                        reranked_docs = self.reranker.rerank(item.query, item.docs)
+                    else:
+                        # Convert Document to RerankedDocument with default score
+                        reranked_docs = [
+                            RerankedDocument(
+                                doc_id=doc.doc_id,
+                                title=doc.title,
+                                content=doc.content,
+                                category=doc.category,
+                                score=1.0,
+                            )
+                            for doc in item.docs
+                        ]
 
-            with (
-                tracer.start_as_current_span("generation.rerank"),
-                profiler.track("generation.rerank"),
-            ):
-                reranked_docs_batch = reranker.rerank_batch(
-                    queries=queries,
-                    documents_batch=documents_batch,
-                    top_n=settings.rerank_top_n,
+                rerank_elapsed = time.time() - rerank_start
+                rerank_duration.observe(rerank_elapsed)
+                stage_duration_gauge.labels(
+                    run_id=settings.profiling_run_id, node=NODE_LABEL, stage="generation.rerank"
+                ).set(rerank_elapsed)
+
+                # Step 2: Generate text with LLM
+                llm_start = time.time()
+                with (
+                    tracer.start_as_current_span("generation.llm"),
+                    profiler.track("generation.llm"),
+                ):
+                    # Use top k documents for context
+                    context_docs = reranked_docs[:3]  # Top 3
+                    generated_text = self.llm_generator.generate(item.query, context_docs)
+
+                llm_elapsed = time.time() - llm_start
+                llm_generation_duration.observe(llm_elapsed)
+                stage_duration_gauge.labels(
+                    run_id=settings.profiling_run_id, node=NODE_LABEL, stage="generation.llm"
+                ).set(llm_elapsed)
+
+                # Step 3: Sentiment Analysis
+                sentiment_start = time.time()
+                with (
+                    tracer.start_as_current_span("generation.sentiment"),
+                    profiler.track("generation.sentiment"),
+                ):
+                    sentiment_score = self.sentiment_analyzer.analyze(generated_text)
+
+                sentiment_elapsed = time.time() - sentiment_start
+                sentiment_duration.observe(sentiment_elapsed)
+                stage_duration_gauge.labels(
+                    run_id=settings.profiling_run_id, node=NODE_LABEL, stage="generation.sentiment"
+                ).set(sentiment_elapsed)
+
+                # Step 4: Toxicity Filter
+                toxicity_start = time.time()
+                with (
+                    tracer.start_as_current_span("generation.toxicity"),
+                    profiler.track("generation.toxicity"),
+                ):
+                    is_toxic, _ = self.toxicity_filter.check(generated_text)
+
+                toxicity_elapsed = time.time() - toxicity_start
+                toxicity_duration.observe(toxicity_elapsed)
+                stage_duration_gauge.labels(
+                    run_id=settings.profiling_run_id, node=NODE_LABEL, stage="generation.toxicity"
+                ).set(toxicity_elapsed)
+
+                # Filter if toxic
+                final_text = generated_text
+                if is_toxic:
+                    final_text = "[Content Filtered due to toxicity]"
+
+                response_items.append(
+                    GenerationResponseItem(
+                        request_id=item.request_id,
+                        generated_response=final_text,
+                        sentiment=sentiment_score,
+                        is_toxic="true" if is_toxic else "false",
+                    )
                 )
 
-            rerank_elapsed = time.time() - rerank_start
-            rerank_duration.observe(rerank_elapsed)
-            stage_duration_gauge.labels(node=NODE_LABEL, stage="generation.rerank").set(
-                rerank_elapsed
-            )
-            stage_metrics.append(
-                StageMetrics(
-                    stage="rerank",
-                    duration=rerank_elapsed,
-                    batch_size=batch_size,
-                )
-            )
-            logger.info("Reranking completed in %.2f seconds", rerank_elapsed)
-
-            # Stage 2: Generate LLM responses
-            logger.info("[Stage 2/4] Generating LLM responses...")
-            llm_start = time.time()
-            with tracer.start_as_current_span("generation.llm"), profiler.track("generation.llm"):
-                generated_responses = llm_generator.generate_batch(
-                    queries=queries,
-                    reranked_docs_batch=reranked_docs_batch,
-                )
-
-            llm_elapsed = time.time() - llm_start
-            llm_generation_duration.observe(llm_elapsed)
-            stage_duration_gauge.labels(node=NODE_LABEL, stage="generation.llm").set(llm_elapsed)
-            stage_metrics.append(
-                StageMetrics(
-                    stage="llm_generation",
-                    duration=llm_elapsed,
-                    batch_size=batch_size,
-                )
-            )
-            logger.info("LLM generation completed in %.2f seconds", llm_elapsed)
-
-            # Stage 3: Analyze sentiment
-            logger.info("[Stage 3/4] Analyzing sentiment...")
-            sentiment_start = time.time()
-            with (
-                tracer.start_as_current_span("generation.sentiment"),
-                profiler.track("generation.sentiment"),
-            ):
-                sentiments = sentiment_analyzer.analyze_batch(generated_responses)
-
-            sentiment_elapsed = time.time() - sentiment_start
-            sentiment_duration.observe(sentiment_elapsed)
-            stage_duration_gauge.labels(node=NODE_LABEL, stage="generation.sentiment").set(
-                sentiment_elapsed
-            )
-            stage_metrics.append(
-                StageMetrics(
-                    stage="sentiment",
-                    duration=sentiment_elapsed,
-                    batch_size=batch_size,
-                )
-            )
-            logger.info("Sentiment analysis completed in %.2f seconds", sentiment_elapsed)
-
-            # Stage 4: Filter toxicity
-            logger.info("[Stage 4/4] Filtering toxicity...")
-            toxicity_start = time.time()
-            with (
-                tracer.start_as_current_span("generation.toxicity"),
-                profiler.track("generation.toxicity"),
-            ):
-                toxicity_flags = toxicity_filter.filter_batch(generated_responses)
-
-            toxicity_elapsed = time.time() - toxicity_start
-            toxicity_duration.observe(toxicity_elapsed)
-            stage_duration_gauge.labels(node=NODE_LABEL, stage="generation.toxicity").set(
-                toxicity_elapsed
-            )
-            stage_metrics.append(
-                StageMetrics(
-                    stage="toxicity",
-                    duration=toxicity_elapsed,
-                    batch_size=batch_size,
-                )
-            )
-            logger.info("Toxicity filtering completed in %.2f seconds", toxicity_elapsed)
-
-            # Build response items
-            response_items = [
-                GenerationResponseItem(
-                    request_id=request.items[i].request_id,
-                    generated_response=generated_responses[i],
-                    sentiment=sentiments[i],
-                    is_toxic=toxicity_flags[i],
-                )
-                for i in range(batch_size)
-            ]
-
-        total_elapsed = time.time() - start_time
-        generation_request_duration.observe(total_elapsed)
-        pipeline_latency_histogram.labels(node=NODE_LABEL, service="generation").observe(
-            total_elapsed
-        )
+        # Record total duration
+        total_duration = time.time() - start_time
+        generation_request_duration.observe(total_duration)
+        pipeline_latency_histogram.labels(
+            run_id=settings.profiling_run_id, node=NODE_LABEL, service="generation"
+        ).observe(total_duration)
         pipeline_request_counter.labels(
+            run_id=settings.profiling_run_id,
             node=NODE_LABEL,
             service="generation",
             status="success",
@@ -420,47 +195,21 @@ async def generate(request: GenerationRequest) -> GenerationResponse:
                 json.dumps(
                     {
                         "event": "generation_profile",
-                        "batch_id": request.batch_id,
+                        "batch_id": generation_request.batch_id,
                         "summary": summary,
                     }
                 )
             )
 
-        logger.info("=" * 60)
-        logger.info("Batch processing complete")
-        logger.info("Total time: %.2f seconds", total_elapsed)
-        logger.info("Stage breakdown:")
-        for metric in stage_metrics:
-            logger.info("  - %s: %.2f seconds", metric.stage, metric.duration)
-        logger.info("=" * 60)
-
-        return GenerationResponse(
-            batch_id=request.batch_id,
-            items=response_items,
-            processing_time=total_elapsed,
+        logger.info(
+            "Generation batch %s completed in %.3fs (avg %.3fms per item)",
+            generation_request.batch_id,
+            total_duration,
+            (total_duration / batch_size) * 1000 if batch_size > 0 else 0,
         )
 
-    except HTTPException:
-        raise
-
-    except Exception as e:
-        _record_pipeline_error("unknown")
-        logger.exception("Error processing generation batch: %s", e)
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail=f"Generation processing failed: {e!s}",
-        ) from e
-
-
-@app.get("/metrics", response_class=Response)
-@app.head("/metrics", response_class=Response)
-async def metrics() -> Response:
-    """
-    Prometheus metrics endpoint.
-
-    Returns metrics in Prometheus text format.
-    """
-    return Response(
-        content=generate_latest(),
-        media_type="text/plain; version=0.0.4; charset=utf-8",
-    )
+        return GenerationResponse(
+            batch_id=generation_request.batch_id,
+            items=response_items,
+            processing_time=total_duration,
+        )

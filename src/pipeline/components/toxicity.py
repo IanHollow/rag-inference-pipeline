@@ -10,7 +10,7 @@ import time
 import torch
 from transformers import TextClassificationPipeline, pipeline as hf_pipeline
 
-from ...config import PipelineSettings
+from ..config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 
@@ -144,3 +144,32 @@ class ToxicityFilter:
         ]
 
         return toxicity_flags
+
+    def check(self, text: str) -> tuple[bool, float]:
+        """
+        Check if text is toxic and return score.
+
+        Args:
+            text: Text to analyze
+
+        Returns:
+            Tuple of (is_toxic, score)
+
+        Raises:
+            RuntimeError: If model is not loaded
+        """
+        if not self._loaded or self.pipeline is None:
+            msg = "Toxicity model not loaded"
+            raise RuntimeError(msg)
+
+        # Truncate text to avoid memory issues
+        truncated_text = text[: self.settings.truncate_length]
+
+        # Run toxicity detection
+        result = self.pipeline(truncated_text)[0]
+        score = result["score"]
+
+        # Check if score exceeds threshold
+        is_toxic = score > self.threshold
+
+        return is_toxic, score

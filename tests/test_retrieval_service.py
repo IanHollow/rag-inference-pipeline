@@ -15,6 +15,7 @@ import gc
 from pathlib import Path
 import sqlite3
 import tempfile
+from typing import Any
 from unittest.mock import MagicMock
 
 from fastapi.testclient import TestClient
@@ -22,10 +23,10 @@ import numpy as np
 import pytest
 import torch
 
+from pipeline.components.document_store import Document, DocumentStore
+from pipeline.components.embedding import EmbeddingGenerator
+from pipeline.components.faiss_store import FAISSStore
 from pipeline.config import PipelineSettings
-from pipeline.services.retrieval.document_store import Document, DocumentStore
-from pipeline.services.retrieval.embedding import EmbeddingGenerator
-from pipeline.services.retrieval.faiss_store import FAISSStore
 from pipeline.services.retrieval.schemas import (
     RetrievalDocument,
     RetrievalRequest,
@@ -365,15 +366,29 @@ class TestRetrievalServiceAPI:
         """Create test client with mocked components."""
         mock_embedding, mock_faiss, mock_docstore = mock_service_components
 
-        # Import service module and patch globals
-        from pipeline.services.retrieval import service
+        from fastapi import FastAPI
 
-        service.embedding_generator = mock_embedding
-        service.faiss_store = mock_faiss
-        service.document_store = mock_docstore
+        from pipeline.component_registry import ComponentRegistry
+        from pipeline.services.retrieval.api import router
+
+        app = FastAPI()
+        app.include_router(router, prefix="/retrieve")
+
+        registry = ComponentRegistry()
+        app.state.registry = registry
+        app.state.component_aliases = {}
+
+        # Register mocks
+        registry.register("embedding_generator", mock_embedding)
+        registry.register("faiss_store", mock_faiss)
+        registry.register("document_store", mock_docstore)
+
+        @app.get("/health")
+        def health() -> dict[str, Any]:
+            return {"status": "healthy", "embedding_loaded": True, "faiss_loaded": True}
 
         # Create test client (skip lifespan)
-        client = TestClient(service.app)
+        client = TestClient(app)
         return client
 
     def test_health_endpoint(self, client: TestClient) -> None:
@@ -421,6 +436,6 @@ class TestRetrievalServiceAPI:
 
     def test_metrics_endpoint(self, client: TestClient) -> None:
         """Test Prometheus metrics endpoint."""
-        response = client.get("/metrics")
+        response = client.get("/retrieve/metrics")
         assert response.status_code == 200
         assert b"retrieval_requests_total" in response.content

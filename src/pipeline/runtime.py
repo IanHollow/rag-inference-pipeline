@@ -13,7 +13,7 @@ from fastapi import FastAPI
 import uvicorn
 
 from .config import get_settings
-from .enums import NodeRole
+from .runtime_factory import create_app_from_profile
 from .telemetry import setup_tracing
 
 # Configure logging
@@ -25,81 +25,16 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# Placeholder for future service implementations
-def create_gateway_app() -> FastAPI:
+def create_app() -> FastAPI:
     """
-    Create the FastAPI application for the Gateway service (Node 0).
-
-    The gateway receives client requests, orchestrates the pipeline across
-    retrieval and generation services, and returns final responses.
+    Create the FastAPI application based on configuration.
 
     Returns:
-        FastAPI: Configured FastAPI application for gateway
+        FastAPI: The configured application
     """
-    from .services.gateway_app import app
-
-    return app
-
-
-def create_retrieval_app() -> FastAPI:
-    """
-    Create the FastAPI application for the Retrieval service (Node 1).
-
-    The retrieval service handles:
-    - Embedding generation
-    - FAISS ANN search
-    - Document fetching
-    - Document reranking
-
-    Returns:
-        FastAPI: Configured FastAPI application for retrieval
-    """
-    from .services.retrieval import app
-
-    return app
-
-
-def create_generation_app() -> FastAPI:
-    """
-    Create the FastAPI application for the Generation service (Node 2).
-
-    The generation service handles:
-    - LLM response generation
-    - Sentiment analysis
-    - Safety/toxicity filtering
-
-    Returns:
-        FastAPI: Configured FastAPI application for generation
-    """
-    from .services.generation import app
-
-    return app
-
-
-def create_app_for_role(role: NodeRole) -> FastAPI:
-    """
-    Create the appropriate FastAPI app based on node role.
-
-    Args:
-        role: The role of this node (gateway/retrieval/generation)
-
-    Returns:
-        FastAPI: The configured application for this role
-
-    Raises:
-        ValueError: If role is not recognized
-    """
-    if role == NodeRole.GATEWAY:
-        logger.info("Creating Gateway application (Node 0)")
-        return create_gateway_app()
-    elif role == NodeRole.RETRIEVAL:
-        logger.info("Creating Retrieval application (Node 1)")
-        return create_retrieval_app()
-    elif role == NodeRole.GENERATION:
-        logger.info("Creating Generation application (Node 2)")
-        return create_generation_app()
-    else:
-        raise ValueError(f"Unknown role: {role}")
+    settings = get_settings()
+    logger.info("Creating application for node %d", settings.node_number)
+    return create_app_from_profile(settings)
 
 
 def setup_signal_handlers(server: uvicorn.Server) -> None:
@@ -150,7 +85,7 @@ def main() -> None:
         logger.info("=" * 70)
 
         # Create the appropriate app for this node's role
-        app = create_app_for_role(settings.role)
+        app = create_app()
 
         # Configure uvicorn server
         config = uvicorn.Config(

@@ -9,7 +9,7 @@ from pathlib import Path
 import sqlite3
 import threading
 
-from ...config import PipelineSettings
+from ..config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 

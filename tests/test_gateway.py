@@ -25,10 +25,13 @@ from pipeline.services.gateway.schemas import (
     GenerationRequest,
     GenerationResponse,
     PendingRequest,
+    QueryRequest,
+    QueryResponse,
     RetrievalRequest,
     RetrievalResponse,
 )
-from pipeline.services.gateway_app import QueryRequest, QueryResponse
+
+# from pipeline.services.gateway_app import QueryRequest, QueryResponse
 
 
 class TestBatchScheduler:

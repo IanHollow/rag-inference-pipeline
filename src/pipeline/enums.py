@@ -28,6 +28,19 @@ class ServiceEndpoint(str, Enum):
     GENERATE = "/generate"
 
 
+class ComponentType(str, Enum):
+    """Component types in the ML pipeline."""
+
+    EMBEDDING = "embedding"
+    FAISS = "faiss"
+    DOCUMENT_STORE = "document_store"
+    RERANKER = "reranker"
+    LLM = "llm"
+    SENTIMENT = "sentiment"
+    TOXICITY = "toxicity"
+    GATEWAY = "gateway"
+
+
 def derive_node_role(node_number: int) -> NodeRole:
     """
     Derive the role of a node based on its number.

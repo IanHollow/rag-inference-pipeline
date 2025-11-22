@@ -1,0 +1,33 @@
+---
+run_id: throughput_extreme
+description: >
+  Aggressive batching focused solely on maximizing requests/minute. Gateway
+  co-locates the embedder, retrieval handles FAISS only, and the generation
+  node runs with a very large batch. Run with moderate concurrency to stress
+  the pipeline for pure throughput.
+
+nodes:
+  - number: 0
+    profile: configs/gateway_with_embedding.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 10
+      GATEWAY_BATCH_TIMEOUT_MS: 180
+  - number: 1
+    profile: configs/retrieval_only.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 16
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 8
+
+workload:
+  requests: 200
+  concurrency: 2
+  rate_limit: 0.0
+  timeout: 300
+
+notes: |-
+  Expect higher latency but potentially the highest throughput. Use this run to
+  determine the practical maximum req/min before timeouts or memory constraints
+  appear.

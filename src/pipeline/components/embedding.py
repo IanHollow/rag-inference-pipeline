@@ -10,7 +10,7 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch
 
-from ...config import PipelineSettings
+from ..config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 
