@@ -1,0 +1,14 @@
+---
+name: gateway
+description: Standard Gateway Node
+
+components:
+  - name: orchestrator
+    type: gateway
+    config:
+      retrieval_url: http://localhost:8001
+      generation_url: http://localhost:8002
+
+routes:
+  - prefix: /
+    target: gateway

@@ -1,0 +1,13 @@
+---
+name: retrieval_only
+description: Retrieval Node (FAISS only)
+
+components:
+  - name: faiss_store
+    type: faiss
+  - name: document_store
+    type: document_store
+
+routes:
+  - prefix: /retrieve
+    target: retrieval

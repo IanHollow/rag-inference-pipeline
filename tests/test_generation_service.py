@@ -13,9 +13,11 @@ from fastapi.testclient import TestClient
 import pytest
 import torch
 
+from pipeline.components.llm import LLMGenerator
+from pipeline.components.reranker import Reranker
+from pipeline.components.sentiment import SentimentAnalyzer
+from pipeline.components.toxicity import ToxicityFilter
 from pipeline.config import PipelineSettings
-from pipeline.services.generation.llm import LLMGenerator
-from pipeline.services.generation.reranker import Reranker
 from pipeline.services.generation.schemas import (
     Document,
     GenerationRequest,
@@ -23,8 +25,6 @@ from pipeline.services.generation.schemas import (
     GenerationResponse,
     RerankedDocument,
 )
-from pipeline.services.generation.sentiment import SentimentAnalyzer
-from pipeline.services.generation.toxicity import ToxicityFilter
 
 
 class TestSchemas:
@@ -446,38 +446,52 @@ class TestGenerationService:
     @pytest.fixture
     def mock_app(self) -> Generator[TestClient, None, None]:
         """Create a test client with mocked models."""
-        from pipeline.services.generation import service
+        from fastapi import FastAPI
 
-        # Mock all the global model instances
-        with (
-            patch.object(service, "reranker") as mock_reranker,
-            patch.object(service, "llm_generator") as mock_llm,
-            patch.object(service, "sentiment_analyzer") as mock_sentiment,
-            patch.object(service, "toxicity_filter") as mock_toxicity,
-        ):
-            # Configure mocks to appear loaded
-            mock_reranker.is_loaded = True
-            mock_llm.is_loaded = True
-            mock_sentiment.is_loaded = True
-            mock_toxicity.is_loaded = True
+        from pipeline.component_registry import ComponentRegistry
+        from pipeline.services.generation.api import router
 
-            # Mock model behaviors
-            mock_reranker.rerank_batch.return_value = [
-                [
-                    RerankedDocument(
-                        doc_id=1, title="Doc 1", content="Content 1", score=0.9, category=""
-                    )
-                ]
-            ]
+        app = FastAPI()
+        app.include_router(router, prefix="/generate")
 
-            mock_llm.generate_batch.return_value = ["Generated response"]
+        registry = ComponentRegistry()
+        app.state.registry = registry
+        app.state.component_aliases = {}
 
-            mock_sentiment.analyze_batch.return_value = ["positive"]
+        # Create mocks
+        mock_reranker = MagicMock()
+        mock_llm = MagicMock()
+        mock_sentiment = MagicMock()
+        mock_toxicity = MagicMock()
 
-            mock_toxicity.filter_batch.return_value = ["false"]
+        # Configure mocks to appear loaded
+        mock_reranker.is_loaded = True
+        mock_llm.is_loaded = True
+        mock_sentiment.is_loaded = True
+        mock_toxicity.is_loaded = True
 
-            client = TestClient(service.app)
-            yield client
+        # Mock model behaviors
+        mock_reranker.rerank.return_value = [
+            RerankedDocument(doc_id=1, title="Doc 1", content="Content 1", score=0.9, category="")
+        ]
+
+        mock_llm.generate.return_value = "Generated response"
+
+        mock_sentiment.analyze.return_value = "positive"
+
+        mock_toxicity.check.return_value = (False, {"label": "toxicity", "score": 0.1})
+
+        # Register mocks
+        registry.register("reranker", mock_reranker)
+        registry.register("llm_generator", mock_llm)
+        registry.register("sentiment_analyzer", mock_sentiment)
+        registry.register("toxicity_filter", mock_toxicity)
+
+        @app.get("/health")
+        def health() -> dict[str, Any]:
+            return {"status": "healthy", "models_loaded": True}
+
+        yield TestClient(app)
 
     def test_health_endpoint(self, mock_app: TestClient) -> None:
         """Test health check endpoint."""
@@ -542,7 +556,7 @@ class TestGenerationService:
 
     def test_metrics_endpoint(self, mock_app: TestClient) -> None:
         """Test metrics endpoint."""
-        response = mock_app.get("/metrics")
+        response = mock_app.get("/generate/metrics")
         assert response.status_code == 200
         # Should return Prometheus text format
         assert "generation_requests_total" in response.text or response.text == ""

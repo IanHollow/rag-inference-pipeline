@@ -1,0 +1,32 @@
+---
+run_id: batch_sweep_ht_8x4
+description: >
+  High-throughput sweep using the retrieval+rerank topology with larger gateway
+  and generation batches. Intended to find the point where throughput gains
+  outweigh added latency.
+
+nodes:
+  - number: 0
+    profile: configs/baseline_gateway.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 8
+      GATEWAY_BATCH_TIMEOUT_MS: 150
+  - number: 1
+    profile: configs/retriever_with_rerank.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 12
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 120
+  concurrency: 1
+  rate_limit: 0.15
+  timeout: 300
+
+notes: |-
+  Compare directly with batch_sweep_ll_2x2 to illustrate how batching knobs
+  impact throughput, latency, and memory. Capture p95 latency and per-node RSS
+  for both runs.

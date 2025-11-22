@@ -34,6 +34,7 @@ class RetrievalRequest(BaseModel):
 
     request_id: str = Field(..., description="Request identifier")
     query: str = Field(..., description="Query text to embed and retrieve for")
+    embedding: list[float] | None = Field(None, description="Pre-computed embedding vector")
 
 
 class RetrievalResponse(BaseModel):
@@ -72,4 +73,5 @@ class PendingRequest(BaseModel):
 
     request_id: str
     query: str
+    embedding: list[float] | None = None
     timestamp: float = Field(..., description="Time request was received")

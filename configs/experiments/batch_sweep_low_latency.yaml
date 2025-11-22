@@ -1,0 +1,31 @@
+---
+run_id: batch_sweep_ll_2x2
+description: >
+  Low-latency sweep using the retrieval+rerank topology but with small
+  gateway/generation batch sizes to minimize queueing. Provides data for
+  latency vs throughput trade-offs.
+
+nodes:
+  - number: 0
+    profile: configs/baseline_gateway.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 2
+      GATEWAY_BATCH_TIMEOUT_MS: 80
+  - number: 1
+    profile: configs/retriever_with_rerank.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 6
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 2
+
+workload:
+  requests: 40
+  concurrency: 1
+  rate_limit: 0.15
+  timeout: 300
+
+notes: |-
+  Use alongside the high-throughput sweep to produce a latency/throughput curve
+  for the report.

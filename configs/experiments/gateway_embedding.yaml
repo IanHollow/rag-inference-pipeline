@@ -1,0 +1,31 @@
+---
+run_id: gateway_embedding
+description: >
+  Gateway co-hosts the embedding model to remove one RPC hop and keep Node 1
+  focused on FAISS and document fetch. Useful for measuring latency gains and
+  reduced Node 1 CPU usage.
+
+nodes:
+  - number: 0
+    profile: configs/gateway_with_embedding.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 75
+  - number: 1
+    profile: configs/retrieval_only.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 8
+  - number: 2
+    profile: configs/generation.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 60
+  concurrency: 1
+  rate_limit: 0.2
+  timeout: 300
+
+notes: |-
+  Compare end-to-end latency and Node 1 memory versus the baseline. Expect
+  smaller payloads sent to Node 1 and faster gateway->retrieval RPC timings.

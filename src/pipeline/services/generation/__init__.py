@@ -4,8 +4,11 @@ Generation service module.
 Provides reranking, LLM generation, sentiment analysis, and toxicity filtering.
 """
 
-from .llm import LLMGenerator
-from .reranker import Reranker
+from ...components.llm import LLMGenerator
+from ...components.reranker import Reranker
+from ...components.sentiment import SentimentAnalyzer
+from ...components.toxicity import ToxicityFilter
+from .api import router
 from .schemas import (
     Document,
     ErrorResponse,
@@ -17,9 +20,6 @@ from .schemas import (
     RerankedDocument,
     StageMetrics,
 )
-from .sentiment import SentimentAnalyzer
-from .service import app
-from .toxicity import ToxicityFilter
 
 __all__ = [
     "Document",
@@ -35,5 +35,5 @@ __all__ = [
     "SentimentAnalyzer",
     "StageMetrics",
     "ToxicityFilter",
-    "app",
+    "router",
 ]

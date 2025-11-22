@@ -1,0 +1,33 @@
+run_id,full_run_id,notes,batch_size,throughput,latency_p50,latency_p95,success_rate,total_rss_mb
+concurrency_stress,concurrency_stress_20251122_042110,"Use this run to capture p95/p99 latency under load and to ensure the system remains stable.
+Include per-node CPU/RSS measurements and check for batching backlog at the gateway.
+",6.0,42.91,978.56,2958.86,100.0,16713.609375
+retrieval_with_rerank,retrieval_with_rerank_20251122_035317,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node 1. Compare
+throughput against the baseline to decide if this composition is worth the added Node 1 load.
+",4.0,47.71,804.37,2827.2,100.0,16917.640625
+gateway_embedding,gateway_embedding_20251122_041041,"Compare end-to-end latency and Node 1 memory versus the baseline. Expect smaller payloads
+sent to Node 1 and faster gateway->retrieval RPC timings.
+",4.0,42.12,871.7,3230.65,100.0,16349.171875
+generation_high_batch,generation_high_batch_20251122_044705,"Intended to push maximum throughput with only 3 nodes. Compare results to previous
+retrieval_with_rerank runs to verify whether co-locating the embedder with the gateway
+plus higher generation batching improves req/min without hurting success rate.
+",8.0,39.81,1309.66,3138.46,100.0,16696.34375
+batch_sweep_ht_8x4,batch_sweep_ht_8x4_20251122_040725,"Compare directly with batch_sweep_ll_2x2 to illustrate how batching knobs impact
+throughput, latency, and memory. Capture p95 latency and per-node RSS for both runs.
+",8.0,39.67,1314.64,3302.87,100.0,16907.609375
+rerank_upstream,rerank_upstream_20251122_035140,Reranker moved to Retrieval node.,32.0,44.35,856.43,2600.39,100.0,16909.21875
+throughput_extreme,throughput_extreme_20251122_043528,"Expect higher latency but potentially the highest throughput. Use this run to determine
+the practical maximum req/min before timeouts or memory constraints appear.
+",10.0,43.33,1216.36,2757.26,100.0,15596.59375
+gateway_embedder,gateway_embedder_20251122_034834,Gateway hosts embedder; retrieval handles FAISS only.,8.0,45.04,844.97,2701.09,100.0,16917.984375
+batch_sweep_ll_2x2,batch_sweep_ll_2x2_20251122_034724,"Use alongside the high-throughput sweep to produce a latency/throughput curve for the report.
+",2.0,43.36,862.94,3139.69,100.0,16964.8125
+long_duration_reliability,long_duration_reliability_20251122_142039,"Capture success rate, memory growth, and average CPU utilization across the long run.
+Use the resulting artifacts to demonstrate operational stability.
+",4.0,31.6,1525.1,4464.42,100.0,6254.796875
+stress_retrieval_long,stress_retrieval_long_20251122_035514,"Monitor FAISS search duration, Node 1 RSS, and RPC latency back to the gateway. Useful for
+determining whether FAISS becomes the new bottleneck when embeddings move upstream.
+",6.0,44.79,860.44,2629.39,100.0,16210.84375
+baseline_reference,baseline_reference_20251122_040519,"Serves as the baseline for comparing all other experiments. Use this run to capture
+per-node RSS, latency distribution, and stage durations for reference.
+",4.0,32.64,1470.41,4257.67,100.0,14433.71875

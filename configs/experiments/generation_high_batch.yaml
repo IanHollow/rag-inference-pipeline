@@ -1,0 +1,33 @@
+---
+run_id: generation_high_batch
+description: >
+  High-throughput scenario using only three nodes. Gateway hosts embeddings to
+  shrink upstream RPCs, retrieval handles FAISS + rerank, and the generation
+  node runs with a larger batch size to maximize LLM utilization.
+
+nodes:
+  - number: 0
+    profile: configs/gateway_with_embedding.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 8
+      GATEWAY_BATCH_TIMEOUT_MS: 150
+  - number: 1
+    profile: configs/retriever_with_rerank.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 10
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 6
+
+workload:
+  requests: 140
+  concurrency: 1
+  rate_limit: 0.12
+  timeout: 300
+
+notes: |-
+  Intended to push maximum throughput with only 3 nodes. Compare results to
+  previous retrieval_with_rerank runs to verify whether co-locating the
+  embedder with the gateway plus higher generation batching improves req/min
+  without hurting success rate.

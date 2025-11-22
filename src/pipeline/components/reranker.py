@@ -14,7 +14,7 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreT
 if TYPE_CHECKING:
     from transformers.modeling_utils import PreTrainedModel
 
-from ...config import PipelineSettings
+from ..config import PipelineSettings
 from .schemas import Document, RerankedDocument
 
 logger = logging.getLogger(__name__)
@@ -37,7 +37,10 @@ class Reranker:
         """
         self.settings = settings
         self.model_name = "BAAI/bge-reranker-base"
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        if settings.only_cpu:
+            self.device = torch.device("cpu")
+        else:
+            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         self.tokenizer: PreTrainedTokenizerBase | None = None
         self.model: PreTrainedModel | None = None
         self._loaded = False

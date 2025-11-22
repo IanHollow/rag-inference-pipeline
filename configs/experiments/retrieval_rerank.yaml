@@ -1,0 +1,32 @@
+---
+run_id: retrieval_with_rerank
+description: >
+  Node 1 performs embedding, FAISS search, document fetch, and reranking so
+  Node 2 handles only LLM + sentiment + toxicity. Measures whether upstream
+  reranking improves throughput by shrinking generation workloads.
+
+nodes:
+  - number: 0
+    profile: configs/baseline_gateway.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retriever_with_rerank.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 8
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 80
+  concurrency: 1
+  rate_limit: 0.25
+  timeout: 300
+
+notes: |-
+  Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+  1. Compare throughput against the baseline to decide if this composition is
+  worth the added Node 1 load.

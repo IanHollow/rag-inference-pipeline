@@ -8,6 +8,7 @@ import time
 
 from opentelemetry import trace
 
+from ...components.embedding import EmbeddingGenerator
 from ...config import get_settings
 from ...enums import ServiceEndpoint
 from ...telemetry import (
@@ -38,32 +39,49 @@ class Orchestrator:
     Orchestrates the ML pipeline by coordinating batching and RPC calls.
     """
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        retrieval_url: str | None = None,
+        generation_url: str | None = None,
+        batch_size: int | None = None,
+        batch_timeout: float | None = None,
+    ) -> None:
         """Initialize the orchestrator."""
+        self.embedding_generator: EmbeddingGenerator | None = None
+
         # Initialize RPC clients
         self.retrieval_client = RPCClient(
-            base_url=settings.retrieval_url,
+            base_url=retrieval_url or settings.retrieval_url,
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=3,
         )
 
         self.generation_client = RPCClient(
-            base_url=settings.generation_url,
+            base_url=generation_url or settings.generation_url,
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=3,
         )
 
         # Initialize batch scheduler
+        # Use provided values or fall back to settings
+        final_batch_size = batch_size if batch_size is not None else settings.gateway_batch_size
+        # Convert seconds to ms for batch scheduler if provided, else use settings (already in ms)
+        final_batch_timeout_ms = (
+            int(batch_timeout * 1000)
+            if batch_timeout is not None
+            else settings.gateway_batch_timeout_ms
+        )
+
         self.batch_scheduler: BatchScheduler[QueryResponse] = BatchScheduler(
-            batch_size=settings.gateway_batch_size,
-            max_batch_delay_ms=settings.gateway_batch_timeout_ms,
+            batch_size=final_batch_size,
+            max_batch_delay_ms=final_batch_timeout_ms,
             process_batch_fn=self._process_batch,
         )
 
         logger.info(
             "Orchestrator initialized with batch_size=%d, timeout=%dms",
-            settings.gateway_batch_size,
-            settings.gateway_batch_timeout_ms,
+            final_batch_size,
+            final_batch_timeout_ms,
         )
 
     async def start(self) -> None:
@@ -162,16 +180,30 @@ class Orchestrator:
         node_label = str(settings.node_number)
 
         # Record batch size metric
-        batch_size_histogram.labels(node=node_label, service="gateway").observe(len(batch))
+        batch_size_histogram.labels(
+            run_id=settings.profiling_run_id, node=node_label, service="gateway"
+        ).observe(len(batch))
 
         # Step 1: Retrieve documents from Node 1
         retrieval_start = time.time()
+
+        # Generate embeddings if generator is available
+        embeddings = None
+        if self.embedding_generator and getattr(self.embedding_generator, "is_loaded", False):
+            queries = [req.query for req in batch.requests]
+            logger.debug("Generating embeddings for %d queries in gateway", len(queries))
+            with profiler.track("gateway.embedding"):
+                embeddings = self.embedding_generator.encode(queries)
+                if hasattr(embeddings, "tolist"):
+                    embeddings = embeddings.tolist()
+
         retrieval_requests = [
             RetrievalRequest(
                 request_id=req.request_id,
                 query=req.query,
+                embedding=embeddings[i] if embeddings is not None else None,
             )
-            for req in batch.requests
+            for i, req in enumerate(batch.requests)
         ]
 
         with profiler.track("gateway.retrieval_rpc"):
@@ -180,9 +212,9 @@ class Orchestrator:
                 retrieval_requests,
             )
         retrieval_duration = time.time() - retrieval_start
-        stage_duration_gauge.labels(node=node_label, stage="gateway.retrieval_rpc").set(
-            retrieval_duration
-        )
+        stage_duration_gauge.labels(
+            run_id=settings.profiling_run_id, node=node_label, stage="gateway.retrieval_rpc"
+        ).set(retrieval_duration)
 
         # Step 2: Generate responses from Node 2
         generation_start = time.time()
@@ -201,9 +233,9 @@ class Orchestrator:
                 generation_requests,
             )
         generation_duration = time.time() - generation_start
-        stage_duration_gauge.labels(node=node_label, stage="gateway.generation_rpc").set(
-            generation_duration
-        )
+        stage_duration_gauge.labels(
+            run_id=settings.profiling_run_id, node=node_label, stage="gateway.generation_rpc"
+        ).set(generation_duration)
 
         # Step 3: Build final responses
         final_responses = [
@@ -245,7 +277,9 @@ class Orchestrator:
         )
 
         # Record latency metric
-        latency_histogram.labels(node=node_label, service="gateway").observe(batch_elapsed)
+        latency_histogram.labels(
+            run_id=settings.profiling_run_id, node=node_label, service="gateway"
+        ).observe(batch_elapsed)
 
         return final_responses
 
@@ -296,7 +330,9 @@ class Orchestrator:
 
             # Record RPC duration
             rpc_duration_histogram.labels(
-                source_node=str(settings.node_number), target_service="retrieval"
+                run_id=settings.profiling_run_id,
+                source_node=str(settings.node_number),
+                target_service="retrieval",
             ).observe(rpc_duration)
 
             # Parse responses
@@ -365,7 +401,9 @@ class Orchestrator:
 
             # Record RPC duration
             rpc_duration_histogram.labels(
-                source_node=str(settings.node_number), target_service="generation"
+                run_id=settings.profiling_run_id,
+                source_node=str(settings.node_number),
+                target_service="generation",
             ).observe(rpc_duration)
 
             # Parse responses
@@ -386,3 +424,7 @@ class Orchestrator:
                 batch_id,
             )
             raise RPCError(f"Generation service error: {e}") from e
+
+    def set_embedding_generator(self, embedding_generator: EmbeddingGenerator) -> None:
+        """Set the embedding generator component."""
+        self.embedding_generator = embedding_generator

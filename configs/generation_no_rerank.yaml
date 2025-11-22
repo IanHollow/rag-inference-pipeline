@@ -1,0 +1,15 @@
+---
+name: generation_no_rerank
+description: Generation node without Reranker
+
+components:
+  - name: llm_generator
+    type: llm
+  - name: sentiment_analyzer
+    type: sentiment
+  - name: toxicity_filter
+    type: toxicity
+
+routes:
+  - prefix: /generate
+    target: generation

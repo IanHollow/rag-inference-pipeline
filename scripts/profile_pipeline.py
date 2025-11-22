@@ -1,25 +1,10 @@
 #!/usr/bin/env python3
 """
 Profiling script for measuring pipeline performance across different batch sizes.
-
-This script can:
-- Send N synthetic queries to the pipeline
-- Test multiple batch sizes (configured via env var or CLI)
-- Store per-request results in JSONL format
-- Generate aggregated CSV summaries
-
-Usage:
-    # Profile with batch sizes 1, 4, 8 and send 24 requests per batch size
-    python scripts/profile_pipeline.py --batch-sizes 1 4 8 --requests 24
-
-    # Profile with current config, send 12 requests
-    python scripts/profile_pipeline.py --requests 12
-
-    # Use environment variables
-    BATCH_SIZES="1,2,4,8" NUM_REQUESTS=24 python scripts/profile_pipeline.py
 """
 
 import argparse
+from concurrent.futures import ThreadPoolExecutor, as_completed
 import csv
 import json
 import os
@@ -35,7 +20,7 @@ import requests
 REPO_ROOT = Path(__file__).parent.parent
 ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "profile"
 
-# Test queries - cycle through these
+# Test queries
 TEST_QUERIES = [
     "How do I return a defective product?",
     "What is your refund policy?",
@@ -123,7 +108,11 @@ def send_request(
 
 
 def run_profiling_batch(
-    server_url: str, num_requests: int, output_file: Path, rate_limit: float = 0.1
+    server_url: str,
+    num_requests: int,
+    output_file: Path,
+    rate_limit: float = 0.1,
+    concurrency: int = 1,
 ) -> list[dict[str, Any]]:
     """
     Run a profiling batch by sending N requests.
@@ -133,29 +122,40 @@ def run_profiling_batch(
         num_requests: Number of requests to send
         output_file: Path to write JSONL results
         rate_limit: Minimum seconds between requests (to avoid overwhelming)
+        concurrency: Number of concurrent requests
 
     Returns:
         List of result dictionaries
     """
     print(f"\n{'=' * 70}")
     print(f"Sending {num_requests} requests to {server_url}")
+    print(f"Concurrency: {concurrency}")
     print(f"Results will be written to: {output_file}")
     print(f"{'=' * 70}\n")
 
     results = []
 
-    with output_file.open("w") as f:
+    with output_file.open("w") as f, ThreadPoolExecutor(max_workers=concurrency) as executor:
+        futures = []
         for i in range(num_requests):
             # Cycle through queries
             query = TEST_QUERIES[i % len(TEST_QUERIES)]
             request_id = f"profile_{int(time.time() * 1000)}_{i}"
 
-            print(f"[{i + 1}/{num_requests}] Sending request {request_id}")
+            print(f"[{i + 1}/{num_requests}] Submitting request {request_id}")
 
-            result = send_request(server_url, request_id, query)
+            future = executor.submit(send_request, server_url, request_id, query)
+            futures.append(future)
+
+            # Rate limiting (only if concurrency is low, otherwise we want to flood)
+            if concurrency == 1 and i < num_requests - 1:
+                time.sleep(rate_limit)
+
+        for future in as_completed(futures):
+            result = future.result()
             results.append(result)
 
-            # Write to JSONL immediately
+            # Write to JSONL immediately (thread-safe enough for single writer loop)
             f.write(json.dumps(result) + "\n")
             f.flush()
 
@@ -163,10 +163,6 @@ def run_profiling_batch(
                 print(f"  ✓ Success: {result['latency_ms']:.2f}ms")
             else:
                 print(f"  ✗ Failed: {result['error']}")
-
-            # Rate limiting
-            if i < num_requests - 1:
-                time.sleep(rate_limit)
 
     return results
 
@@ -272,10 +268,21 @@ def main() -> int:
         help="Minimum seconds between requests (default: 0.1)",
     )
     parser.add_argument(
+        "--concurrency",
+        type=int,
+        default=1,
+        help="Number of concurrent requests (default: 1)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=ARTIFACTS_DIR,
         help="Output directory for results (default: artifacts/profile)",
+    )
+    parser.add_argument(
+        "--no-interactive",
+        action="store_true",
+        help="Skip interactive prompts",
     )
 
     args = parser.parse_args()
@@ -320,13 +327,20 @@ def main() -> int:
         # Note: In a real scenario, you'd restart the pipeline with the new batch size
         # For now, we just document which batch size we're testing
         print(f"\nNote: Ensure pipeline is running with GATEWAY_BATCH_SIZE={batch_size}")
-        input("Press Enter when ready to continue...")
+        if not args.no_interactive:
+            input("Press Enter when ready to continue...")
 
         # Output files
         jsonl_file = args.output_dir / f"batch_{batch_size}.jsonl"
 
         # Run profiling
-        results = run_profiling_batch(server_url, args.requests, jsonl_file, args.rate_limit)
+        results = run_profiling_batch(
+            server_url,
+            args.requests,
+            jsonl_file,
+            args.rate_limit,
+            concurrency=args.concurrency,
+        )
 
         # Analyze results
         summary = analyze_results(results)

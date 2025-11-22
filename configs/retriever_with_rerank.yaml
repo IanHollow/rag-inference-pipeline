@@ -1,0 +1,17 @@
+---
+name: retrieval_with_rerank
+description: Retrieval Node with Reranker
+
+components:
+  - name: embedding_generator
+    type: embedding
+  - name: faiss_store
+    type: faiss
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+
+routes:
+  - prefix: /retrieve
+    target: retrieval
