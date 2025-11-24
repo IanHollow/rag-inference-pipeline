@@ -5,6 +5,7 @@ This module is invoked via `python -m pipeline.runtime`
 """
 
 import logging
+import os
 import signal
 import sys
 from types import FrameType
@@ -12,9 +13,10 @@ from types import FrameType
 from fastapi import FastAPI
 import uvicorn
 
-from .config import get_settings
+from .config import PipelineSettings, get_settings
 from .runtime_factory import create_app_from_profile
 from .telemetry import setup_tracing
+from .utils.executors import ServiceExecutorFactory
 
 # Configure logging
 logging.basicConfig(
@@ -25,6 +27,33 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
+def configure_libraries(settings: PipelineSettings) -> None:
+    """Configure library thread counts based on settings."""
+    # Set OMP_NUM_THREADS for libraries that respect it
+    os.environ["OMP_NUM_THREADS"] = str(settings.cpu_inference_threads)
+
+    try:
+        import torch
+
+        torch.set_num_threads(settings.cpu_inference_threads)
+        torch.set_num_interop_threads(max(2, settings.cpu_inference_threads // 2))
+        logger.info(
+            "Configured torch threads: intra=%d, inter=%d",
+            settings.cpu_inference_threads,
+            max(2, settings.cpu_inference_threads // 2),
+        )
+    except ImportError:
+        pass
+
+    try:
+        import faiss
+
+        faiss.omp_set_num_threads(settings.cpu_inference_threads)
+        logger.info("Configured faiss threads: %d", settings.cpu_inference_threads)
+    except ImportError:
+        pass
+
+
 def create_app() -> FastAPI:
     """
     Create the FastAPI application based on configuration.
@@ -33,6 +62,11 @@ def create_app() -> FastAPI:
         FastAPI: The configured application
     """
     settings = get_settings()
+    configure_libraries(settings)
+
+    # Initialize executor factory with settings
+    ServiceExecutorFactory.initialize(settings)
+
     logger.info("Creating application for node %d", settings.node_number)
     return create_app_from_profile(settings)
 
@@ -47,6 +81,7 @@ def setup_signal_handlers(server: uvicorn.Server) -> None:
 
     def signal_handler(signum: int, frame: FrameType | None) -> None:
         logger.info("Received signal %d, initiating graceful shutdown...", signum)
+        ServiceExecutorFactory.shutdown()
         server.should_exit = True
 
     signal.signal(signal.SIGINT, signal_handler)

@@ -4,6 +4,8 @@ run_id: rerank_upstream
 nodes:
   - number: 0
     profile: configs/baseline_gateway.yaml
+    env:
+      ENABLE_ADAPTIVE_BATCHING: false
   - number: 1
     profile: configs/retriever_with_rerank.yaml
   - number: 2

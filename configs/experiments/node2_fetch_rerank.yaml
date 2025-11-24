@@ -11,10 +11,12 @@ nodes:
     env:
       GATEWAY_BATCH_SIZE: 4
       GATEWAY_BATCH_TIMEOUT_MS: 100
+      ENABLE_ADAPTIVE_BATCHING: false
   - number: 1
     profile: configs/retrieval_embedder_faiss_ids.yaml
     env:
       RETRIEVAL_BATCH_SIZE: 4
+      DOCUMENTS_PAYLOAD_MODE: id_only
   - number: 2
     profile: configs/generation_fetch_rerank_full.yaml
     env:

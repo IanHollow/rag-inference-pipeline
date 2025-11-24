@@ -149,7 +149,9 @@ class TestRPCClient:
         # Mock successful response
         mock_response = MagicMock()
         mock_response.status_code = 200
+        mock_response.content = b'{"result": "success"}'
         mock_response.json.return_value = {"result": "success"}
+        mock_response.headers = {"content-encoding": ""}
         mock_response.raise_for_status = MagicMock()
 
         with patch.object(client._client, "post", new_callable=AsyncMock) as mock_post:
@@ -332,15 +334,15 @@ class TestOrchestrator:
 
         # Mock successful retrieval
         retrieval_response_data = {
-            "responses": [
+            "batch_id": "1",
+            "items": [
                 {
                     "request_id": "test_001",
-                    "doc_ids": [1],
-                    "documents": [
+                    "docs": [
                         {"doc_id": 1, "title": "Doc 1", "content": "Content 1", "category": "A"}
                     ],
                 }
-            ]
+            ],
         }
 
         retrieval_post_mock: AsyncMock = retrieval_mock.post

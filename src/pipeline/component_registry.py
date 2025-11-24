@@ -8,12 +8,22 @@ logger = logging.getLogger(__name__)
 class ComponentRegistry:
     def __init__(self) -> None:
         self._components: dict[str, object] = {}
+        self._aliases: dict[str, str] = {}
         self._lifecycle_hooks: dict[str, dict[str, Callable | None]] = {}
         self._startup_order: list[str] = []
 
     @property
     def components(self) -> dict[str, object]:
         return self._components
+
+    def register_alias(self, alias: str, name: str) -> None:
+        """Register an alias for a component."""
+        if alias in self._components:
+            raise ValueError(f"Alias '{alias}' conflicts with existing component name")
+        if alias in self._aliases and self._aliases[alias] != name:
+            raise ValueError(f"Alias '{alias}' already registered to '{self._aliases[alias]}'")
+
+        self._aliases[alias] = name
 
     def register(
         self,
@@ -58,7 +68,14 @@ class ComponentRegistry:
             if name in self._startup_order:
                 self._startup_order.remove(name)
 
+            # Remove aliases pointing to this component
+            aliases_to_remove = [k for k, v in self._aliases.items() if v == name]
+            for k in aliases_to_remove:
+                del self._aliases[k]
+
     def get(self, name: str) -> object:
+        if name in self._aliases:
+            name = self._aliases[name]
         return self._components.get(name)
 
     async def start_all(self) -> None:

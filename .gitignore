@@ -213,3 +213,4 @@ faiss_index.bin
 artifacts/
 logs/
 .pipeline_pids.json
+cache/

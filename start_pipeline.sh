@@ -37,6 +37,7 @@ echo ""
 declare -a PIDS=()
 
 # Function to cleanup on exit
+# shellcheck disable=SC2329
 cleanup() {
 	echo ""
 	echo "Stopping all nodes..."
@@ -72,9 +73,57 @@ PIDS+=($!)
 sleep 1
 
 echo ""
-echo "All nodes started!"
-echo "Monitor logs with: tail -f logs/*.log"
-echo "Press Ctrl+C to stop all nodes"
-echo ""
+echo "Waiting for all nodes to become healthy..."
 
-wait
+# Health check function
+check_health() {
+	local port=$1
+	if curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/health" | grep -q "200"; then
+		return 0
+	else
+		return 1
+	fi
+}
+
+# Wait for services to be ready
+MAX_RETRIES=60
+count=0
+nodes_ready=0
+
+while [ $count -lt $MAX_RETRIES ]; do
+	nodes_ready=0
+
+	# Check Gateway
+	if check_health 8000; then
+		((nodes_ready += 1))
+	fi
+
+	# Check Retrieval
+	if check_health 8001; then
+		((nodes_ready += 1))
+	fi
+
+	# Check Generation
+	if check_health 8002; then
+		((nodes_ready += 1))
+	fi
+
+	if [ $nodes_ready -eq 3 ]; then
+		echo "All nodes are healthy and ready to accept requests!"
+		echo "Monitor logs with: tail -f logs/*.log"
+		echo "Press Ctrl+C to stop all nodes"
+		echo ""
+		wait
+		exit 0
+	fi
+
+	sleep 1
+	((count += 1))
+	echo -ne "Waiting for nodes... ($count/$MAX_RETRIES)\r"
+done
+
+echo ""
+echo "Error: Timeout waiting for nodes to become healthy."
+echo "Check logs for details:"
+echo "  tail -n 20 logs/*.log"
+exit 1

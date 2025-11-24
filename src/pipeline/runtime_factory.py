@@ -4,8 +4,11 @@ import logging
 from pathlib import Path
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Response
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.responses import ORJSONResponse
+from prometheus_client import generate_latest
 import yaml
 
 from .component_factory import create_component
@@ -13,11 +16,20 @@ from .component_registry import ComponentRegistry
 from .config import PipelineSettings
 from .config.profile_schema import ProfileFile
 from .enums import ComponentType
+from .middleware import CompressionMiddleware
 
 # Import routers
 from .services.gateway.api import router as gateway_router
-from .services.generation.api import router as generation_router
-from .services.retrieval.api import router as retrieval_router
+from .services.generation.api import (
+    router as generation_router,
+    start_generation_executor,
+    stop_generation_executor,
+)
+from .services.retrieval.api import (
+    router as retrieval_router,
+    start_retrieval_executor,
+    stop_retrieval_executor,
+)
 from .telemetry import instrument_fastapi_app
 
 logger = logging.getLogger(__name__)
@@ -26,9 +38,6 @@ logger = logging.getLogger(__name__)
 def load_role_profile(settings: PipelineSettings) -> ProfileFile:
     """
     Load the role profile based on settings.
-    Priority:
-    1. ROLE_PROFILE_OVERRIDE_PATH (YAML/JSON file)
-    2. PIPELINE_ROLE_PROFILE (name of profile -> configs/{name}.yaml)
     """
     path = None
 
@@ -44,6 +53,25 @@ def load_role_profile(settings: PipelineSettings) -> ProfileFile:
         path = base_dir / "configs" / f"{settings.pipeline_role_profile}.yaml"
         if not path.exists():
             path = base_dir / "configs" / f"{settings.pipeline_role_profile}.yml"
+
+    # 3. Fallback: Derive from node number if not set (in case validator failed)
+    if not path and not settings.role_profile_override_path:
+        profile_name = ""
+        if settings.node_number == 0:
+            profile_name = "baseline_gateway"
+        elif settings.node_number == 1:
+            profile_name = "retrieval"
+        elif settings.node_number == 2:
+            profile_name = "generation"
+
+        if profile_name:
+            logger.info(
+                "Deriving role profile from node number %d: %s", settings.node_number, profile_name
+            )
+            base_dir = Path(__file__).resolve().parent.parent.parent
+            path = base_dir / "configs" / f"{profile_name}.yaml"
+            if not path.exists():
+                path = base_dir / "configs" / f"{profile_name}.yml"
 
     if not path or not path.exists():
         raise ValueError(
@@ -75,7 +103,23 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logger.info("Application startup: %s", profile.name)
         await registry.start_all()
+
+        # Start service executors if applicable
+        has_retrieval = any(r.target == "retrieval" for r in profile.routes)
+        has_generation = any(r.target == "generation" for r in profile.routes)
+
+        if has_retrieval:
+            await start_retrieval_executor(registry)
+        if has_generation:
+            await start_generation_executor(registry)
+
         yield
+
+        if has_generation:
+            await stop_generation_executor()
+        if has_retrieval:
+            await stop_retrieval_executor()
+
         logger.info("Application shutdown")
         await registry.stop_all()
         registry.unload_all()
@@ -85,7 +129,11 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
         description=f"Role: {profile.name} - {profile.description}",
         version="0.1.0",
         lifespan=lifespan,
+        default_response_class=ORJSONResponse,
     )
+
+    # Set default response class for router
+    app.router.default_response_class = ORJSONResponse
 
     # Add CORS
     app.add_middleware(
@@ -95,6 +143,12 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # Add Custom Compression (runs before GZip)
+    app.add_middleware(CompressionMiddleware)
+
+    # Add GZip compression
+    app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     # Instrument with telemetry
     instrument_fastapi_app(app)
@@ -152,34 +206,35 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
                         f"Duplicate alias '{alias}' defined in component '{component_config.name}'"
                     )
                 app.state.component_aliases[alias] = component_config.name
+                registry.register_alias(alias, component_config.name)
 
             # Register default aliases based on type if not present
             # This helps fallback routing where no explicit aliases are defined
+            default_alias = None
             if ctype == ComponentType.EMBEDDING or ctype == "embedding_generator":
-                if "embedding_generator" not in app.state.component_aliases:
-                    app.state.component_aliases["embedding_generator"] = component_config.name
+                default_alias = "embedding_generator"
             elif ctype == ComponentType.FAISS or ctype == "faiss_store":
-                if "faiss_store" not in app.state.component_aliases:
-                    app.state.component_aliases["faiss_store"] = component_config.name
+                default_alias = "faiss_store"
             elif ctype == ComponentType.DOCUMENT_STORE:
-                if "document_store" not in app.state.component_aliases:
-                    app.state.component_aliases["document_store"] = component_config.name
+                default_alias = "document_store"
             elif ctype == ComponentType.RERANKER:
-                if "reranker" not in app.state.component_aliases:
-                    app.state.component_aliases["reranker"] = component_config.name
+                default_alias = "reranker"
             elif ctype == ComponentType.LLM or ctype == "llm_generator":
-                if "llm_generator" not in app.state.component_aliases:
-                    app.state.component_aliases["llm_generator"] = component_config.name
+                default_alias = "llm_generator"
             elif ctype == ComponentType.SENTIMENT or ctype == "sentiment_analyzer":
-                if "sentiment_analyzer" not in app.state.component_aliases:
-                    app.state.component_aliases["sentiment_analyzer"] = component_config.name
+                default_alias = "sentiment_analyzer"
             elif ctype == ComponentType.TOXICITY or ctype == "toxicity_filter":
-                if "toxicity_filter" not in app.state.component_aliases:
-                    app.state.component_aliases["toxicity_filter"] = component_config.name
-            elif (
-                ctype == ComponentType.GATEWAY or ctype == "orchestrator"
-            ) and "orchestrator" not in app.state.component_aliases:
-                app.state.component_aliases["orchestrator"] = component_config.name
+                default_alias = "toxicity_filter"
+            elif ctype == ComponentType.GATEWAY or ctype == "orchestrator":
+                default_alias = "orchestrator"
+
+            if (
+                default_alias
+                and default_alias not in app.state.component_aliases
+                and default_alias != component_config.name
+            ):
+                app.state.component_aliases[default_alias] = component_config.name
+                registry.register_alias(default_alias, component_config.name)
 
         except Exception as e:
             logger.exception("Failed to create component %s: %s", component_config.name, e)
@@ -214,6 +269,7 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
                     ):
                         raise ValueError(f"Duplicate alias '{alias}' defined in route '{prefix}'")
                     app.state.component_aliases[alias] = target_name
+                    registry.register_alias(alias, target_name)
         else:
             logger.warning("Unknown route target: %s", target)
 
@@ -240,5 +296,20 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
             "role": profile.name,
             "components": components_status,
         }
+
+    # Global metrics endpoint
+    @app.get("/metrics", response_class=Response)
+    @app.head("/metrics", response_class=Response)
+    async def metrics() -> Response:
+        """
+        Prometheus metrics endpoint.
+
+        Returns:
+            Metrics in Prometheus text format
+        """
+        return Response(
+            content=generate_latest(),
+            media_type="text/plain; version=0.0.4; charset=utf-8",
+        )
 
     return app

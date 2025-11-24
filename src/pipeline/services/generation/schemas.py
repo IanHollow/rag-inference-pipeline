@@ -4,9 +4,16 @@ Schema definitions for the generation service.
 Defines request/response models for generation, reranking, sentiment, and toxicity analysis.
 """
 
-from pydantic import BaseModel, Field
+import base64
+import logging
 
-from ...components.schemas import Document, RerankedDocument
+import msgspec
+from pydantic import Field, field_validator
+
+from ...base_schemas import BaseJSONModel
+from ...components.schemas import Document, DocumentStruct, RerankedDocument
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Document",
@@ -21,22 +28,37 @@ __all__ = [
 ]
 
 
-class GenerationRequestItem(BaseModel):
+class GenerationRequestItem(BaseJSONModel):
     """Single item in a generation batch request."""
 
     request_id: str = Field(..., description="Unique request identifier")
     query: str = Field(..., description="User query")
     docs: list[Document] = Field(..., description="Retrieved documents for this query")
+    compressed_docs: bytes | None = Field(None, description="Compressed documents payload")
+
+    @field_validator("compressed_docs", mode="before")
+    @classmethod
+    def decode_base64(cls, v: str | bytes | None) -> bytes | None:
+        if isinstance(v, str):
+            # logger.debug(f"DEBUG: Decoding base64 string of length {len(v)}")
+            try:
+                decoded = base64.b64decode(v)
+                # logger.debug(f"DEBUG: Decoded bytes length: {len(decoded)}")
+                return decoded
+            except Exception as e:
+                logger.error("Base64 decode failed: %s", e)
+                raise
+        return v
 
 
-class GenerationRequest(BaseModel):
+class GenerationRequest(BaseJSONModel):
     """Batch generation request."""
 
     batch_id: str = Field(..., description="Unique batch identifier")
     items: list[GenerationRequestItem] = Field(..., description="Batch items to process")
 
 
-class GenerationResponseItem(BaseModel):
+class GenerationResponseItem(BaseJSONModel):
     """Single item in a generation batch response."""
 
     request_id: str = Field(..., description="Unique request identifier")
@@ -48,7 +70,7 @@ class GenerationResponseItem(BaseModel):
     is_toxic: str | None = Field(None, description="Toxicity flag: 'true' or 'false'")
 
 
-class GenerationResponse(BaseModel):
+class GenerationResponse(BaseJSONModel):
     """Batch generation response."""
 
     batch_id: str = Field(..., description="Unique batch identifier")
@@ -56,7 +78,7 @@ class GenerationResponse(BaseModel):
     processing_time: float = Field(..., description="Total processing time in seconds")
 
 
-class HealthResponse(BaseModel):
+class HealthResponse(BaseJSONModel):
     """Health check response."""
 
     status: str = Field(..., description="Service status")
@@ -66,15 +88,51 @@ class HealthResponse(BaseModel):
     models_loaded: bool = Field(..., description="Whether all models are loaded")
 
 
-class ErrorResponse(BaseModel):
+class ErrorResponse(BaseJSONModel):
     """Error response."""
 
     detail: str = Field(..., description="Error message")
 
 
-class StageMetrics(BaseModel):
+class StageMetrics(BaseJSONModel):
     """Metrics for a single processing stage."""
 
     stage: str = Field(..., description="Stage name")
     duration: float = Field(..., description="Duration in seconds")
     batch_size: int = Field(..., description="Number of items processed")
+
+
+# === Msgspec Structs ===
+
+
+class GenerationRequestItemStruct(msgspec.Struct):
+    """Msgspec equivalent of GenerationRequestItem."""
+
+    request_id: str
+    query: str
+    docs: list[DocumentStruct]
+    compressed_docs: bytes | None = None
+
+
+class GenerationRequestStruct(msgspec.Struct):
+    """Msgspec equivalent of GenerationRequest."""
+
+    batch_id: str
+    items: list[GenerationRequestItemStruct]
+
+
+class GenerationResponseItemStruct(msgspec.Struct):
+    """Msgspec equivalent of GenerationResponseItem."""
+
+    request_id: str
+    generated_response: str
+    sentiment: str | None = None
+    is_toxic: str | None = None
+
+
+class GenerationResponseStruct(msgspec.Struct):
+    """Msgspec equivalent of GenerationResponse."""
+
+    batch_id: str
+    items: list[GenerationResponseItemStruct]
+    processing_time: float

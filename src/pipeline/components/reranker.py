@@ -37,10 +37,17 @@ class Reranker:
         """
         self.settings = settings
         self.model_name = "BAAI/bge-reranker-base"
+
         if settings.only_cpu:
-            self.device = torch.device("cpu")
+            device_name = "cpu"
+        elif torch.cuda.is_available():
+            device_name = "cuda"
+        elif torch.backends.mps.is_available():
+            device_name = "mps"
         else:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device_name = "cpu"
+
+        self.device = torch.device(device_name)
         self.tokenizer: PreTrainedTokenizerBase | None = None
         self.model: PreTrainedModel | None = None
         self._loaded = False
@@ -71,6 +78,18 @@ class Reranker:
             self.model = cast("PreTrainedModel", model.to(self.device))
             self.model.eval()
             self._loaded = True
+
+            # Warmup
+            logger.info("Warming up reranker...")
+            if self.tokenizer:
+                dummy_query = "query " * 10
+                dummy_doc = "document " * 100  # Approx 100-200 tokens
+                dummy_inputs = self.tokenizer(
+                    [dummy_query], [dummy_doc], return_tensors="pt", padding=True, truncation=True
+                ).to(self.device)
+                with torch.no_grad():
+                    self.model(**dummy_inputs)
+            logger.info("Reranker warmup complete")
 
             elapsed = time.time() - start_time
             logger.info("Reranker model loaded in %.2f seconds", elapsed)

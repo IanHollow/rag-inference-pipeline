@@ -8,8 +8,10 @@ import logging
 from pathlib import Path
 import sqlite3
 import threading
+from typing import Any, cast
 
 from ..config import PipelineSettings
+from ..utils.cache import CompressedLRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -84,10 +86,18 @@ class DocumentStore:
         self.settings = settings
         self.db_path = Path(settings.documents_dir) / "documents.db"
         self._local = threading.local()
+        self._lock = threading.Lock()
 
         # Validate database exists
         if not self.db_path.exists():
             raise FileNotFoundError(f"Document database not found at {self.db_path}")
+
+        # Initialize cache
+        self.cache = CompressedLRUCache[int, dict[str, str | int]](
+            capacity=settings.document_cache_capacity,
+            ttl=settings.cache_max_ttl,
+            name="document_cache",
+        )
 
         logger.info("Initialized DocumentStore with database at %s", self.db_path)
 
@@ -128,44 +138,83 @@ class DocumentStore:
             doc_ids: List of document IDs to fetch
 
         Returns:
-            List of Document objects (may be shorter than doc_ids if some IDs don't exist)
+            List of Document objects (ordered by input doc_ids)
         """
         if not doc_ids:
             return []
 
-        conn = self._get_connection()
-        cursor = conn.cursor()
+        # Check cache first
+        cached_docs = {}
+        missing_ids = []
 
-        self._prepare_doc_id_temp_table(cursor)
-        cursor.executemany(
-            "INSERT OR IGNORE INTO temp_doc_ids(doc_id) VALUES (?)",
-            ((doc_id,) for doc_id in doc_ids),
-        )
+        disable_cache = getattr(self.settings, "disable_cache_for_profiling", True)
 
-        try:
-            cursor.execute(
-                "SELECT doc_id, title, content, category "
-                "FROM documents "
-                "WHERE doc_id IN (SELECT doc_id FROM temp_doc_ids)"
+        if disable_cache:
+            missing_ids = list(doc_ids)
+        else:
+            with self._lock:
+                for doc_id in doc_ids:
+                    cached = self.cache.get(doc_id)
+                    if cached:
+                        try:
+                            # Cast to Any to avoid mypy error about unpacking dict[str, str | int]
+                            cached_docs[doc_id] = Document(**cast("dict[str, Any]", cached))
+                        except Exception:
+                            # Invalid cache entry
+                            missing_ids.append(doc_id)
+                    else:
+                        missing_ids.append(doc_id)
+
+        fetched_docs = []
+        if missing_ids:
+            conn = self._get_connection()
+            cursor = conn.cursor()
+
+            self._prepare_doc_id_temp_table(cursor)
+            cursor.executemany(
+                "INSERT OR IGNORE INTO temp_doc_ids(doc_id) VALUES (?)",
+                ((doc_id,) for doc_id in missing_ids),
             )
-            rows = cursor.fetchall()
 
-            documents = []
-            for row in rows:
-                doc = Document(
-                    doc_id=row["doc_id"],
-                    title=row["title"] or "",
-                    content=row["content"] or "",
-                    category=row["category"] or None,
+            try:
+                cursor.execute(
+                    "SELECT doc_id, title, content, category "
+                    "FROM documents "
+                    "WHERE doc_id IN (SELECT doc_id FROM temp_doc_ids)"
                 )
-                documents.append(doc)
+                rows = cursor.fetchall()
 
-            logger.debug("Fetched %d documents out of %d requested", len(documents), len(doc_ids))
-            return documents
+                for row in rows:
+                    doc = Document(
+                        doc_id=row["doc_id"],
+                        title=row["title"] or "",
+                        content=row["content"] or "",
+                        category=row["category"] or None,
+                    )
+                    fetched_docs.append(doc)
+                    # Update cache
+                    if not disable_cache:
+                        with self._lock:
+                            self.cache.put(doc.doc_id, doc.to_dict())
 
-        except sqlite3.Error as e:
-            logger.exception("SQLite error fetching documents: %s", e)
-            raise RuntimeError(f"Failed to fetch documents: {e}") from e
+                logger.debug(
+                    "Fetched %d documents from DB out of %d missing",
+                    len(fetched_docs),
+                    len(missing_ids),
+                )
+
+            except sqlite3.Error as e:
+                logger.exception("SQLite error fetching documents: %s", e)
+                raise RuntimeError(f"Failed to fetch documents: {e}") from e
+
+        # Combine and order
+        all_docs_map = cached_docs
+        for doc in fetched_docs:
+            all_docs_map[doc.doc_id] = doc
+
+        ordered_docs = [all_docs_map[doc_id] for doc_id in doc_ids if doc_id in all_docs_map]
+
+        return ordered_docs
 
     def fetch_documents_batch(
         self, doc_ids_batch: list[list[int]], truncate_length: int | None = None
@@ -192,6 +241,11 @@ class DocumentStore:
             results.append(documents)
 
         return results
+
+    def clear_cache(self) -> None:
+        """Clear the document cache safely."""
+        with self._lock:
+            self.cache.clear()
 
     def close_all(self) -> None:
         """

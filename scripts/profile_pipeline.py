@@ -107,12 +107,26 @@ def send_request(
     return result
 
 
+def clear_caches(server_url: str) -> None:
+    """Clear caches on all services via Gateway."""
+    try:
+        url = server_url.replace("/query", "/clear_cache")
+        response = requests.post(url, timeout=10)
+        if response.status_code == 200:
+            print(f"Caches cleared: {response.json()}")
+        else:
+            print(f"Failed to clear caches: {response.status_code} {response.text}")
+    except Exception as e:
+        print(f"Failed to clear caches: {e}")
+
+
 def run_profiling_batch(
     server_url: str,
     num_requests: int,
     output_file: Path,
     rate_limit: float = 0.1,
     concurrency: int = 1,
+    randomize_queries: bool = False,
 ) -> list[dict[str, Any]]:
     """
     Run a profiling batch by sending N requests.
@@ -123,6 +137,7 @@ def run_profiling_batch(
         output_file: Path to write JSONL results
         rate_limit: Minimum seconds between requests (to avoid overwhelming)
         concurrency: Number of concurrent requests
+        randomize_queries: Whether to append random suffix to queries
 
     Returns:
         List of result dictionaries
@@ -130,6 +145,7 @@ def run_profiling_batch(
     print(f"\n{'=' * 70}")
     print(f"Sending {num_requests} requests to {server_url}")
     print(f"Concurrency: {concurrency}")
+    print(f"Randomize Queries: {randomize_queries}")
     print(f"Results will be written to: {output_file}")
     print(f"{'=' * 70}\n")
 
@@ -140,6 +156,11 @@ def run_profiling_batch(
         for i in range(num_requests):
             # Cycle through queries
             query = TEST_QUERIES[i % len(TEST_QUERIES)]
+            if randomize_queries:
+                import uuid
+
+                query = f"{query} {uuid.uuid4()}"
+
             request_id = f"profile_{int(time.time() * 1000)}_{i}"
 
             print(f"[{i + 1}/{num_requests}] Submitting request {request_id}")
@@ -284,6 +305,16 @@ def main() -> int:
         action="store_true",
         help="Skip interactive prompts",
     )
+    parser.add_argument(
+        "--randomize-queries",
+        action="store_true",
+        help="Randomize queries to bypass cache",
+    )
+    parser.add_argument(
+        "--clear-cache",
+        action="store_true",
+        help="Clear caches before each run",
+    )
 
     args = parser.parse_args()
 
@@ -330,6 +361,9 @@ def main() -> int:
         if not args.no_interactive:
             input("Press Enter when ready to continue...")
 
+        if args.clear_cache:
+            clear_caches(server_url)
+
         # Output files
         jsonl_file = args.output_dir / f"batch_{batch_size}.jsonl"
 
@@ -340,6 +374,7 @@ def main() -> int:
             jsonl_file,
             args.rate_limit,
             concurrency=args.concurrency,
+            randomize_queries=args.randomize_queries,
         )
 
         # Analyze results

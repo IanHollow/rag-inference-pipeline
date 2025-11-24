@@ -5,10 +5,14 @@ Encapsulates the business logic for the generation pipeline:
 Reranking -> LLM Generation -> Sentiment Analysis -> Toxicity Filtering.
 """
 
+from concurrent.futures import ThreadPoolExecutor
 import json
 import logging
+import threading
 import time
 
+import lz4.frame  # type: ignore
+import msgspec
 from opentelemetry import trace
 
 from ...components.document_store import DocumentStore
@@ -35,7 +39,9 @@ from .metrics import (
 )
 from .schemas import (
     Document,
+    DocumentStruct,
     GenerationRequest,
+    GenerationRequestItem,
     GenerationResponse,
     GenerationResponseItem,
     RerankedDocument,
@@ -62,6 +68,17 @@ class GenerationService:
         self.toxicity_filter = toxicity_filter
         self.document_store = document_store
 
+        # Validate configuration: ID-only handoff requires a document store
+        payload_mode = settings.documents_payload_mode
+        if payload_mode == "id_only" and self.document_store is None:
+            msg = (
+                "Configuration Error: DOCUMENTS_PAYLOAD_MODE='id_only' but no DocumentStore "
+                "is configured on this node. Documents will reach the LLM empty. "
+                "Please add a document_store to the generation profile or use 'full' payload mode."
+            )
+            logger.error(msg)
+            raise ValueError(msg)
+
     def process_batch(self, generation_request: GenerationRequest) -> GenerationResponse:
         """
         Process a batch of generation requests.
@@ -71,6 +88,8 @@ class GenerationService:
             sample_rate=settings.profiling_sample_rate,
             logger=logger,
         )
+        # Profiler lock to ensure thread safety if SampledStageProfiler is not thread-safe
+        profiler_lock = threading.Lock()
 
         start_time = time.time()
         batch_size = len(generation_request.items)
@@ -92,13 +111,42 @@ class GenerationService:
                 "pipeline.node": settings.node_number,
             },
         ):
-            response_items: list[GenerationResponseItem] = []
+            # Semaphore to limit concurrent LLM calls
+            llm_semaphore = threading.Semaphore(settings.max_parallel_generation)
 
-            for item in generation_request.items:
+            def process_single_request(item: GenerationRequestItem) -> GenerationResponseItem:
+                # Step -1: Decompress documents if needed
+                if item.compressed_docs:
+                    try:
+                        decompressed_data = lz4.frame.decompress(item.compressed_docs)
+                        docs_structs = msgspec.json.decode(
+                            decompressed_data, type=list[DocumentStruct]
+                        )
+                        item.docs = [
+                            Document(
+                                doc_id=d.doc_id,
+                                title=d.title,
+                                content=d.content,
+                                category=d.category,
+                            )
+                            for d in docs_structs
+                        ]
+                    except Exception as e:
+                        logger.error(
+                            "Failed to decompress documents for request %s: %s. Type: %s, Len: %s, Preview: %s",
+                            item.request_id,
+                            e,
+                            type(item.compressed_docs),
+                            len(item.compressed_docs) if item.compressed_docs else 0,
+                            item.compressed_docs[:20] if item.compressed_docs else "None",
+                        )
+                        # Fallback or continue (docs might be empty)
+
                 # Step 0: Fetch documents if needed (Doc-ID handoff)
                 if self.document_store and item.docs and not item.docs[0].content:
                     logger.debug("Fetching content for %d documents", len(item.docs))
                     doc_ids = [d.doc_id for d in item.docs]
+                    # DocumentStore fetch is thread-safe (sqlite thread-local)
                     fetched_docs = self.document_store.fetch_documents(doc_ids)
 
                     # Convert to Pydantic Document objects
@@ -114,15 +162,18 @@ class GenerationService:
 
                 # Step 1: Rerank documents
                 rerank_start = time.time()
+                # Use lock for profiler track
+                with profiler_lock:
+                    rerank_ctx = profiler.track("generation.rerank")
+
                 with (
                     tracer.start_as_current_span("generation.rerank"),
-                    profiler.track("generation.rerank"),
+                    rerank_ctx,
                 ):
                     if self.reranker:
-                        # Convert RetrievalDocument to dict or whatever reranker expects
+                        # Reranker might use torch, which is thread-safe for inference
                         reranked_docs = self.reranker.rerank(item.query, item.docs)
                     else:
-                        # Convert Document to RerankedDocument with default score
                         reranked_docs = [
                             RerankedDocument(
                                 doc_id=doc.doc_id,
@@ -142,13 +193,29 @@ class GenerationService:
 
                 # Step 2: Generate text with LLM
                 llm_start = time.time()
+                with profiler_lock:
+                    llm_ctx = profiler.track("generation.llm")
+
                 with (
                     tracer.start_as_current_span("generation.llm"),
-                    profiler.track("generation.llm"),
+                    llm_ctx,
+                    llm_semaphore,  # Guard LLM generation
                 ):
                     # Use top k documents for context
                     context_docs = reranked_docs[:3]  # Top 3
+                    logger.warning("Calling LLM generator with %d docs", len(context_docs))
                     generated_text = self.llm_generator.generate(item.query, context_docs)
+
+                    # Log token/char counts for profiling
+                    context_len = sum(len(d.content) for d in context_docs)
+                    gen_len = len(generated_text)
+                    logger.info(
+                        "LLM Generation: request_id=%s, context_chars=%d, output_chars=%d, time=%.3fs",
+                        item.request_id,
+                        context_len,
+                        gen_len,
+                        time.time() - llm_start,
+                    )
 
                 llm_elapsed = time.time() - llm_start
                 llm_generation_duration.observe(llm_elapsed)
@@ -160,9 +227,12 @@ class GenerationService:
                 sentiment_score = None
                 if self.sentiment_analyzer:
                     sentiment_start = time.time()
+                    with profiler_lock:
+                        sentiment_ctx = profiler.track("generation.sentiment")
+
                     with (
                         tracer.start_as_current_span("generation.sentiment"),
-                        profiler.track("generation.sentiment"),
+                        sentiment_ctx,
                     ):
                         sentiment_score = self.sentiment_analyzer.analyze(generated_text)
 
@@ -178,9 +248,12 @@ class GenerationService:
                 is_toxic = False
                 if self.toxicity_filter:
                     toxicity_start = time.time()
+                    with profiler_lock:
+                        toxicity_ctx = profiler.track("generation.toxicity")
+
                     with (
                         tracer.start_as_current_span("generation.toxicity"),
-                        profiler.track("generation.toxicity"),
+                        toxicity_ctx,
                     ):
                         is_toxic, _ = self.toxicity_filter.check(generated_text)
 
@@ -197,14 +270,24 @@ class GenerationService:
                 if is_toxic:
                     final_text = "[Content Filtered due to toxicity]"
 
-                response_items.append(
-                    GenerationResponseItem(
-                        request_id=item.request_id,
-                        generated_response=final_text,
-                        sentiment=sentiment_score,
-                        is_toxic="true" if is_toxic else "false" if self.toxicity_filter else None,
-                    )
+                return GenerationResponseItem(
+                    request_id=item.request_id,
+                    generated_response=final_text,
+                    sentiment=sentiment_score,
+                    is_toxic="true" if is_toxic else "false" if self.toxicity_filter else None,
                 )
+
+            # Fan out requests
+            response_items: list[GenerationResponseItem] = []
+            max_workers = settings.max_parallel_generation
+
+            if max_workers > 1 and batch_size > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    response_items = list(
+                        executor.map(process_single_request, generation_request.items)
+                    )
+            else:
+                response_items = [process_single_request(item) for item in generation_request.items]
 
         # Record total duration
         total_duration = time.time() - start_time

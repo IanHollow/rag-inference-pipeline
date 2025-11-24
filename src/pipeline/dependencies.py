@@ -27,8 +27,7 @@ def get_component(name: str) -> Callable[[Request], object]:
         resolved_name = aliases.get(name, name)
 
         component = registry.get(resolved_name)
-        # Optional: we could return None or raise error if missing.
-        # Existing code checks for None and raises 500.
+
         return component
 
     return _get_component

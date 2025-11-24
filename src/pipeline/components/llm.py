@@ -42,10 +42,17 @@ class LLMGenerator:
         """
         self.settings = settings
         self.model_name = "Qwen/Qwen2.5-0.5B-Instruct"
+
         if settings.only_cpu:
-            self.device = torch.device("cpu")
+            device_name = "cpu"
+        elif torch.cuda.is_available():
+            device_name = "cuda"
+        elif torch.backends.mps.is_available():
+            device_name = "mps"
         else:
-            self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+            device_name = "cpu"
+
+        self.device = torch.device(device_name)
         self.tokenizer: PreTrainedTokenizerBase | None = None
         self.model: PreTrainedModel | None = None
         self._loaded = False
@@ -87,6 +94,58 @@ class LLMGenerator:
             self.model = model
             self._loaded = True
 
+            # Warmup
+            logger.info("Warming up LLM...")
+            if self.tokenizer:
+                dummy_doc_content = (
+                    "This is a test document content that simulates a real retrieved chunk. " * 5
+                )
+                warmup_messages = [
+                    {
+                        "role": "system",
+                        "content": "When given Context and Question, reply as 'Answer: <final answer>' only.",
+                    },
+                    {
+                        "role": "user",
+                        "content": f"Context:\n- Doc 1: {dummy_doc_content}\n- Doc 2: {dummy_doc_content}\n- Doc 3: {dummy_doc_content}\n\nQuestion: What is this?\n\nAnswer:",
+                    },
+                ]
+                warmup_text = self.tokenizer.apply_chat_template(
+                    warmup_messages,
+                    tokenize=False,
+                    add_generation_prompt=True,
+                )
+                dummy_input = self.tokenizer(warmup_text, return_tensors="pt").to(self.device)
+
+                # Get generate method explicitly
+                generate_fn = model.generate
+
+                with torch.no_grad():
+                    if self.device.type == "cuda":
+                        with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
+                            generate_fn(
+                                **dummy_input,
+                                max_new_tokens=10,  # Generate more tokens to trigger more kernels
+                                temperature=0.01,
+                                pad_token_id=self.tokenizer.eos_token_id,
+                                do_sample=False,
+                            )
+                    else:
+                        generate_fn(
+                            **dummy_input,
+                            max_new_tokens=10,
+                            temperature=0.01,
+                            pad_token_id=self.tokenizer.eos_token_id,
+                            do_sample=False,
+                        )
+
+            # Clear cache after warmup to free up memory
+            if self.device.type == "cuda":
+                torch.cuda.empty_cache()
+            elif self.device.type == "mps":
+                torch.mps.empty_cache()
+
+            logger.info("LLM warmup complete")
             elapsed = time.time() - start_time
             logger.info("LLM model loaded in %.2f seconds", elapsed)
 

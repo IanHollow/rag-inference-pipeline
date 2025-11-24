@@ -2,10 +2,14 @@
 Orchestrator for coordinating the entire ML pipeline across nodes.
 """
 
+import asyncio
+from collections.abc import Sequence
+from dataclasses import dataclass
 import json
 import logging
 import time
 
+import msgspec
 from opentelemetry import trace
 
 from ...components.embedding import EmbeddingGenerator
@@ -19,17 +23,22 @@ from ...telemetry import (
     SampledStageProfiler,
     batch_size_histogram,
     latency_histogram,
+    queue_depth_gauge,
     rpc_duration_histogram,
     stage_duration_gauge,
 )
+from ...utils.cache import LRUCache
 from .batch_scheduler import Batch, BatchScheduler
 from .rpc_client import RPCClient, RPCError
 from .schemas import (
     GenerationRequest,
+    GenerationRequestStruct,
     GenerationResponse,
     PendingRequest,
+    PendingRequestStruct,
     QueryResponse,
     RetrievalRequest,
+    RetrievalRequestStruct,
     RetrievalResponse,
 )
 
@@ -61,12 +70,16 @@ class Orchestrator:
             base_url=retrieval_url or settings.retrieval_url,
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=3,
+            compression=settings.pipeline_rpc_compression,
+            compression_level=settings.pipeline_rpc_compression_level,
         )
 
         self.generation_client = RPCClient(
             base_url=generation_url or settings.generation_url,
             timeout_seconds=settings.request_timeout_seconds,
             max_retries=3,
+            compression=settings.pipeline_rpc_compression,
+            compression_level=settings.pipeline_rpc_compression_level,
         )
 
         # Initialize batch scheduler
@@ -83,22 +96,58 @@ class Orchestrator:
             batch_size=final_batch_size,
             max_batch_delay_ms=final_batch_timeout_ms,
             process_batch_fn=self._process_batch,
+            service_name="gateway",
+            enable_adaptive=getattr(settings, "enable_adaptive_batching", True),
         )
 
+        # Apply min batch size from settings if adaptive
+        if self.batch_scheduler.policy:
+            self.batch_scheduler.policy.min_batch_size = settings.gateway_min_batch_size
+
+        # Initialize cache
+        self.query_cache = LRUCache[str, QueryResponse](
+            capacity=settings.gateway_cache_capacity,
+            ttl=settings.cache_max_ttl,
+            name="gateway_response_cache",
+        )
+
+        # Initialize pipeline queues
+        self.retrieval_queue: asyncio.Queue[PipelineChunk | None] = asyncio.Queue()
+        self.generation_queue: asyncio.Queue[PipelineChunk | None] = asyncio.Queue()
+        self.postproc_queue: asyncio.Queue[PipelineChunk | None] = asyncio.Queue()
+        self.workers: list[asyncio.Task[None]] = []
+
         logger.info(
-            "Orchestrator initialized with batch_size=%d, timeout=%dms",
+            "Orchestrator initialized with batch_size=%d, timeout=%dms, adaptive=%s",
             final_batch_size,
             final_batch_timeout_ms,
+            getattr(settings, "enable_adaptive_batching", True),
         )
 
     async def start(self) -> None:
         """Start the orchestrator."""
         await self.batch_scheduler.start()
+
+        # Start pipeline workers
+        self.workers = [
+            asyncio.create_task(self._retrieval_worker(), name="retrieval_worker"),
+            asyncio.create_task(self._generation_worker(), name="generation_worker"),
+            asyncio.create_task(self._postproc_worker(), name="postproc_worker"),
+        ]
+
         logger.info("Orchestrator started")
 
     async def stop(self) -> None:
         """Stop the orchestrator and cleanup resources."""
         await self.batch_scheduler.stop()
+
+        # Stop pipeline workers
+        # Only enqueue one sentinel since we have one retrieval worker
+        await self.retrieval_queue.put(None)
+
+        if self.workers:
+            await asyncio.gather(*self.workers, return_exceptions=True)
+
         await self.retrieval_client.close()
         await self.generation_client.close()
         logger.info("Orchestrator stopped")
@@ -120,11 +169,35 @@ class Orchestrator:
         start_time = time.time()
         logger.info("Processing query: request_id=%s", request_id)
 
+        # Normalize query for caching
+        normalized_query = " ".join(query.strip().lower().split())
+
+        if getattr(settings, "fuzzy_cache_matching", False):
+            # Token sort for fuzzy matching
+            tokens = normalized_query.split()
+            tokens.sort()
+            normalized_query = " ".join(tokens)
+
+        # Check cache
+        # Respect DISABLE_CACHE_FOR_PROFILING
+        cache_enabled = (
+            settings.gateway_response_cache_enabled and not settings.disable_cache_for_profiling
+        )
+
+        if cache_enabled and (cached := self.query_cache.get(normalized_query)):
+            logger.info("Cache hit for query: %s", query)
+            # Update request_id
+            response = cached.model_copy(update={"request_id": request_id})
+            return response
+
         # Create pending request
-        pending_request = PendingRequest(
+        # Use Msgspec Struct for internal processing
+        pending_request = PendingRequestStruct(
             request_id=request_id,
             query=query,
             timestamp=start_time,
+            embedding=None,
+            docs=None,
         )
 
         try:
@@ -138,6 +211,10 @@ class Orchestrator:
                 },
             ):
                 result = await self.batch_scheduler.enqueue(pending_request)
+
+            # Cache result
+            if cache_enabled:
+                self.query_cache.put(normalized_query, result)
 
             elapsed = time.time() - start_time
             logger.info(
@@ -159,18 +236,7 @@ class Orchestrator:
 
     async def _process_batch(self, batch: Batch[QueryResponse]) -> list[QueryResponse]:
         """
-        Process a batch of requests through the pipeline.
-
-        Steps:
-        1. Call /retrieve for all queries in batch
-        2. Call /generate for all queries in batch
-        3. Return list of QueryResponse in same order as batch.requests
-
-        Args:
-            batch: Batch of requests to process
-
-        Returns:
-            List of QueryResponse objects
+        Process a batch of requests through the pipeline using pipelined execution.
         """
         batch_start = time.time()
         logger.info(
@@ -191,122 +257,34 @@ class Orchestrator:
             run_id=settings.profiling_run_id, node=node_label, service="gateway"
         ).observe(len(batch))
 
-        # Step 1: Retrieve documents from Node 1
-        retrieval_start = time.time()
+        # Create futures for results
+        loop = asyncio.get_running_loop()
+        futures = [loop.create_future() for _ in batch.requests]
 
-        # Generate embeddings if generator is available
-        embeddings = None
-        if self.embedding_generator and getattr(self.embedding_generator, "is_loaded", False):
-            queries = [req.query for req in batch.requests]
-            logger.debug("Generating embeddings for %d queries in gateway", len(queries))
-            with profiler.track("gateway.embedding"):
-                embeddings = self.embedding_generator.encode(queries)
-                if hasattr(embeddings, "tolist"):
-                    embeddings = embeddings.tolist()
-
-        retrieval_requests = [
-            RetrievalRequest(
-                request_id=req.request_id,
-                query=req.query,
-                embedding=embeddings[i] if embeddings is not None else None,
-            )
-            for i, req in enumerate(batch.requests)
+        # Split into chunks for pipelining
+        chunk_size = 4  # Smaller chunks for better pipelining
+        chunks_reqs = [
+            batch.requests[i : i + chunk_size] for i in range(0, len(batch.requests), chunk_size)
+        ]
+        chunks_futures = [
+            futures[i : i + chunk_size] for i in range(0, len(batch.requests), chunk_size)
         ]
 
-        with profiler.track("gateway.retrieval_rpc"):
-            retrieval_responses = await self._call_retrieval_service(
-                batch.batch_id,
-                retrieval_requests,
-            )
-        retrieval_duration = time.time() - retrieval_start
-        stage_duration_gauge.labels(
-            run_id=settings.profiling_run_id, node=node_label, stage="gateway.retrieval_rpc"
-        ).set(retrieval_duration)
-
-        # Step 1.5: Rerank if local reranker is available
-        if self.reranker and getattr(self.reranker, "is_loaded", False):
-            rerank_start = time.time()
-            logger.debug("Reranking %d requests in gateway", len(retrieval_responses))
-            with profiler.track("gateway.rerank"):
-                for i, resp in enumerate(retrieval_responses):
-                    # Convert dicts to Documents
-                    docs = [Document(**d) for d in resp.docs]
-                    # Rerank
-                    reranked = self.reranker.rerank(batch.requests[i].query, docs)
-                    # Update response docs (convert back to dicts, keeping order)
-                    # We only keep top 10 or so usually, but reranker returns all or top_n
-                    # Let's assume we keep all returned by reranker
-                    resp.docs = [d.model_dump() for d in reranked]
-
-            rerank_duration = time.time() - rerank_start
-            stage_duration_gauge.labels(
-                run_id=settings.profiling_run_id, node=node_label, stage="gateway.rerank"
-            ).set(rerank_duration)
-
-        # Step 2: Generate responses from Node 2
-        generation_start = time.time()
-        generation_requests = [
-            GenerationRequest(
-                request_id=req.request_id,
-                query=req.query,
-                docs=resp.docs,
-            )
-            for req, resp in zip(batch.requests, retrieval_responses, strict=False)
-        ]
-
-        with profiler.track("gateway.generation_rpc"):
-            generation_responses = await self._call_generation_service(
-                batch.batch_id,
-                generation_requests,
-            )
-        generation_duration = time.time() - generation_start
-        stage_duration_gauge.labels(
-            run_id=settings.profiling_run_id, node=node_label, stage="gateway.generation_rpc"
-        ).set(generation_duration)
-
-        # Step 2.5: Post-processing (Sentiment/Toxicity) if local
-        if (self.sentiment_analyzer and getattr(self.sentiment_analyzer, "is_loaded", False)) or (
-            self.toxicity_filter and getattr(self.toxicity_filter, "is_loaded", False)
+        # Submit chunks to pipeline
+        for i, (chunk_reqs, chunk_futs) in enumerate(
+            zip(chunks_reqs, chunks_futures, strict=False)
         ):
-            postproc_start = time.time()
-            with profiler.track("gateway.postprocessing"):
-                for gen_resp in generation_responses:
-                    # Sentiment
-                    if (
-                        gen_resp.sentiment is None
-                        and self.sentiment_analyzer
-                        and getattr(self.sentiment_analyzer, "is_loaded", False)
-                    ):
-                        gen_resp.sentiment = self.sentiment_analyzer.analyze(
-                            gen_resp.generated_response
-                        )
-
-                    # Toxicity
-                    if (
-                        gen_resp.is_toxic is None
-                        and self.toxicity_filter
-                        and getattr(self.toxicity_filter, "is_loaded", False)
-                    ):
-                        is_toxic, _ = self.toxicity_filter.check(gen_resp.generated_response)
-                        gen_resp.is_toxic = "true" if is_toxic else "false"
-                        if is_toxic:
-                            gen_resp.generated_response = "[Content Filtered due to toxicity]"
-
-            postproc_duration = time.time() - postproc_start
-            stage_duration_gauge.labels(
-                run_id=settings.profiling_run_id, node=node_label, stage="gateway.postprocessing"
-            ).set(postproc_duration)
-
-        # Step 3: Build final responses
-        final_responses = [
-            QueryResponse(
-                request_id=gen_resp.request_id,
-                generated_response=gen_resp.generated_response,
-                sentiment=gen_resp.sentiment or "neutral",  # Fallback if still None
-                is_toxic=gen_resp.is_toxic or "false",  # Fallback if still None
+            chunk = PipelineChunk(
+                batch_id=batch.batch_id,
+                chunk_index=i,
+                requests=chunk_reqs,
+                futures=chunk_futs,
+                profiler=profiler,
             )
-            for gen_resp in generation_responses
-        ]
+            await self.retrieval_queue.put(chunk)
+
+        # Wait for all results
+        results = await asyncio.gather(*futures)
 
         batch_elapsed = time.time() - batch_start
 
@@ -329,8 +307,6 @@ class Orchestrator:
                     "batch_id": batch.batch_id,
                     "size": len(batch),
                     "latency_ms": round(batch_elapsed * 1000, 2),
-                    "node1_ms": round(retrieval_duration * 1000, 2),
-                    "node2_ms": round(generation_duration * 1000, 2),
                     "timestamp": batch_start,
                 }
             )
@@ -341,12 +317,12 @@ class Orchestrator:
             run_id=settings.profiling_run_id, node=node_label, service="gateway"
         ).observe(batch_elapsed)
 
-        return final_responses
+        return results
 
     async def _call_retrieval_service(
         self,
         batch_id: int,
-        requests: list[RetrievalRequest],
+        requests: Sequence[RetrievalRequest | RetrievalRequestStruct],
     ) -> list[RetrievalResponse]:
         """
         Call retrieval service with batch of requests.
@@ -368,9 +344,17 @@ class Orchestrator:
         )
 
         try:
+            # Use msgspec structs if available, otherwise fallback
+            items_data = []
+            for req in requests:
+                if isinstance(req, RetrievalRequestStruct):
+                    items_data.append(msgspec.to_builtins(req))
+                else:
+                    items_data.append(req.model_dump())
+
             payload = {
                 "batch_id": str(batch_id),
-                "items": [req.model_dump() for req in requests],
+                "items": items_data,
             }
 
             rpc_start = time.time()
@@ -396,6 +380,8 @@ class Orchestrator:
             ).observe(rpc_duration)
 
             # Parse responses
+            # response_data is a dict (from orjson.loads)
+            # We should probably use msgspec to decode if we can, but here we just get a dict.
             responses = [RetrievalResponse(**resp) for resp in response_data["items"]]
 
             logger.debug(
@@ -417,7 +403,7 @@ class Orchestrator:
     async def _call_generation_service(
         self,
         batch_id: int,
-        requests: list[GenerationRequest],
+        requests: Sequence[GenerationRequest | GenerationRequestStruct],
     ) -> list[GenerationResponse]:
         """
         Call generation service with batch of requests.
@@ -439,9 +425,16 @@ class Orchestrator:
         )
 
         try:
+            items_data = []
+            for req in requests:
+                if isinstance(req, GenerationRequestStruct):
+                    items_data.append(msgspec.to_builtins(req))
+                else:
+                    items_data.append(req.model_dump())
+
             payload = {
                 "batch_id": str(batch_id),
-                "items": [req.model_dump() for req in requests],
+                "items": items_data,
             }
 
             rpc_start = time.time()
@@ -485,6 +478,214 @@ class Orchestrator:
             )
             raise RPCError(f"Generation service error: {e}") from e
 
+    async def _retrieval_worker(self) -> None:
+        """Worker for retrieval stage."""
+        while True:
+            chunk = await self.retrieval_queue.get()
+            queue_depth_gauge.labels(
+                run_id=settings.profiling_run_id,
+                node=str(settings.node_number),
+                service="gateway_retrieval",
+            ).set(self.retrieval_queue.qsize())
+
+            if chunk is None:
+                await self.generation_queue.put(None)
+                self.retrieval_queue.task_done()
+                break
+
+            try:
+                # Generate embeddings if generator is available
+                embeddings = None
+                if self.embedding_generator and getattr(
+                    self.embedding_generator, "is_loaded", False
+                ):
+                    queries = [req.query for req in chunk.requests]
+                    with chunk.profiler.track("gateway.embedding"):
+                        embeddings = self.embedding_generator.encode(queries)
+                        if hasattr(embeddings, "tolist"):
+                            embeddings = embeddings.tolist()
+
+                retrieval_requests = [
+                    RetrievalRequest(
+                        request_id=req.request_id,
+                        query=req.query,
+                        embedding=embeddings[i] if embeddings is not None else None,
+                    )
+                    for i, req in enumerate(chunk.requests)
+                ]
+
+                retrieval_start = time.time()
+                with chunk.profiler.track("gateway.retrieval_rpc"):
+                    chunk.retrieval_responses = await self._call_retrieval_service(
+                        chunk.batch_id,
+                        retrieval_requests,
+                    )
+                stage_duration_gauge.labels(
+                    run_id=settings.profiling_run_id,
+                    node=str(settings.node_number),
+                    stage="retrieval_rpc",
+                ).set(time.time() - retrieval_start)
+
+                await self.generation_queue.put(chunk)
+
+            except Exception as e:
+                logger.exception("Error in retrieval worker")
+                # Fail all futures in chunk
+                for f in chunk.futures:
+                    if not f.done():
+                        f.set_exception(e)
+            finally:
+                self.retrieval_queue.task_done()
+
+    async def _generation_worker(self) -> None:
+        """Worker for generation stage."""
+        while True:
+            chunk = await self.generation_queue.get()
+            queue_depth_gauge.labels(
+                run_id=settings.profiling_run_id,
+                node=str(settings.node_number),
+                service="gateway_generation",
+            ).set(self.generation_queue.qsize())
+
+            if chunk is None:
+                await self.postproc_queue.put(None)
+                self.generation_queue.task_done()
+                break
+
+            try:
+                if not chunk.retrieval_responses:
+                    raise ValueError("Missing retrieval responses")
+
+                # Rerank if local reranker is available
+                if self.reranker and getattr(self.reranker, "is_loaded", False):
+                    rerank_start = time.time()
+                    with chunk.profiler.track("gateway.rerank"):
+                        for i, resp in enumerate(chunk.retrieval_responses):
+                            # Convert dicts to Documents
+                            docs = [
+                                Document(
+                                    doc_id=int(d["doc_id"]),
+                                    title=str(d["title"]),
+                                    content=str(d["content"]),
+                                    category=str(d.get("category") or ""),
+                                )
+                                for d in resp.docs
+                            ]
+                            # Rerank
+                            reranked = self.reranker.rerank(chunk.requests[i].query, docs)
+                            resp.docs = [d.model_dump() for d in reranked]
+                    stage_duration_gauge.labels(
+                        run_id=settings.profiling_run_id,
+                        node=str(settings.node_number),
+                        stage="rerank",
+                    ).set(time.time() - rerank_start)
+
+                generation_requests = [
+                    GenerationRequest(
+                        request_id=req.request_id,
+                        query=req.query,
+                        docs=resp.docs,
+                        compressed_docs=resp.compressed_docs,
+                    )
+                    for req, resp in zip(chunk.requests, chunk.retrieval_responses, strict=False)
+                ]
+
+                generation_start = time.time()
+                with chunk.profiler.track("gateway.generation_rpc"):
+                    chunk.generation_responses = await self._call_generation_service(
+                        chunk.batch_id,
+                        generation_requests,
+                    )
+                stage_duration_gauge.labels(
+                    run_id=settings.profiling_run_id,
+                    node=str(settings.node_number),
+                    stage="generation_rpc",
+                ).set(time.time() - generation_start)
+
+                await self.postproc_queue.put(chunk)
+
+            except Exception as e:
+                logger.exception("Error in generation worker")
+                for f in chunk.futures:
+                    if not f.done():
+                        f.set_exception(e)
+            finally:
+                self.generation_queue.task_done()
+
+    async def _postproc_worker(self) -> None:
+        """Worker for post-processing stage."""
+        while True:
+            chunk = await self.postproc_queue.get()
+            queue_depth_gauge.labels(
+                run_id=settings.profiling_run_id,
+                node=str(settings.node_number),
+                service="gateway_postproc",
+            ).set(self.postproc_queue.qsize())
+
+            if chunk is None:
+                self.postproc_queue.task_done()
+                break
+
+            try:
+                if not chunk.generation_responses:
+                    raise ValueError("Missing generation responses")
+
+                # Post-processing (Sentiment/Toxicity) if local
+                if (
+                    self.sentiment_analyzer and getattr(self.sentiment_analyzer, "is_loaded", False)
+                ) or (self.toxicity_filter and getattr(self.toxicity_filter, "is_loaded", False)):
+                    postproc_start = time.time()
+                    with chunk.profiler.track("gateway.postprocessing"):
+                        for gen_resp in chunk.generation_responses:
+                            # Sentiment
+                            if (
+                                gen_resp.sentiment is None
+                                and self.sentiment_analyzer
+                                and getattr(self.sentiment_analyzer, "is_loaded", False)
+                            ):
+                                gen_resp.sentiment = self.sentiment_analyzer.analyze(
+                                    gen_resp.generated_response
+                                )
+
+                            # Toxicity
+                            if (
+                                gen_resp.is_toxic is None
+                                and self.toxicity_filter
+                                and getattr(self.toxicity_filter, "is_loaded", False)
+                            ):
+                                is_toxic, _ = self.toxicity_filter.check(
+                                    gen_resp.generated_response
+                                )
+                                gen_resp.is_toxic = "true" if is_toxic else "false"
+                                if is_toxic:
+                                    gen_resp.generated_response = (
+                                        "[Content Filtered due to toxicity]"
+                                    )
+                    stage_duration_gauge.labels(
+                        run_id=settings.profiling_run_id,
+                        node=str(settings.node_number),
+                        stage="postprocessing",
+                    ).set(time.time() - postproc_start)
+
+                # Build final responses and set futures
+                for i, gen_resp in enumerate(chunk.generation_responses):
+                    response = QueryResponse(
+                        request_id=gen_resp.request_id,
+                        generated_response=gen_resp.generated_response,
+                        sentiment=gen_resp.sentiment or "neutral",
+                        is_toxic=gen_resp.is_toxic or "false",
+                    )
+                    if not chunk.futures[i].done():
+                        chunk.futures[i].set_result(response)
+
+            except Exception as e:
+                logger.exception("Error in postproc worker")
+                for f in chunk.futures:
+                    if not f.done():
+                        f.set_exception(e)
+            finally:
+                self.postproc_queue.task_done()
+
     def set_components(
         self,
         embedding_generator: EmbeddingGenerator | None = None,
@@ -505,3 +706,16 @@ class Orchestrator:
     def set_embedding_generator(self, embedding_generator: EmbeddingGenerator) -> None:
         """Set the embedding generator component."""
         self.embedding_generator = embedding_generator
+
+
+@dataclass
+class PipelineChunk:
+    """Represents a chunk of requests moving through the pipeline."""
+
+    batch_id: int
+    chunk_index: int
+    requests: list[PendingRequest | PendingRequestStruct]
+    futures: list[asyncio.Future[QueryResponse]]
+    profiler: SampledStageProfiler
+    retrieval_responses: list[RetrievalResponse] | None = None
+    generation_responses: list[GenerationResponse] | None = None

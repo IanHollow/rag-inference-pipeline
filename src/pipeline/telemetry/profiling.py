@@ -95,14 +95,6 @@ def profile_context(stage_name: str, log_results: bool = True) -> Iterator[Profi
     """
     Context manager for profiling a code block.
 
-    Usage:
-        with profile_context("embedding") as profile:
-            # Your code here
-            embeddings = model.encode(texts)
-
-        # After the block, profile.duration_ms and profile.memory_delta_mb are available
-        print(f"Embedding took {profile.duration_ms:.2f}ms")
-
     Args:
         stage_name: Name of the stage being profiled
         log_results: Whether to log profiling results
@@ -148,22 +140,6 @@ def profile_context(stage_name: str, log_results: bool = True) -> Iterator[Profi
 class StageProfiler:
     """
     Utility class for tracking profiling data across multiple stages.
-
-    Usage:
-        profiler = StageProfiler()
-
-        with profile_context("embedding") as profile:
-            # code
-            pass
-        profiler.add(profile)
-
-        with profile_context("retrieval") as profile:
-            # code
-            pass
-        profiler.add(profile)
-
-        # Get summary
-        summary = profiler.get_summary()
     """
 
     def __init__(self) -> None:

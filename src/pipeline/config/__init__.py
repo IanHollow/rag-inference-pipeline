@@ -5,10 +5,18 @@ This module uses Pydantic Settings to load configuration from environment variab
 required by the project spec.
 """
 
+import os
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from ..enums import NodeRole, derive_node_role
+
+
+def _default_cpu_threads() -> int:
+    """Default to min(16, cpu_count) to avoid oversubscription on large nodes."""
+    count = os.cpu_count() or 8
+    return min(16, count)
 
 
 class PipelineSettings(BaseSettings):
@@ -79,6 +87,94 @@ class PipelineSettings(BaseSettings):
         description="If true, only use CPU",
     )
 
+    # === CPU Parallelism Configuration ===
+    cpu_inference_threads: int = Field(
+        default_factory=_default_cpu_threads,
+        alias="CPU_INFERENCE_THREADS",
+        description="Number of threads for CPU inference (torch, faiss)",
+    )
+
+    cpu_worker_threads: int = Field(
+        default_factory=_default_cpu_threads,
+        alias="CPU_WORKER_THREADS",
+        description="Number of threads for worker pools",
+    )
+
+    max_parallel_generation: int = Field(
+        default=4,
+        alias="MAX_PARALLEL_GENERATION",
+        description="Maximum number of concurrent generation requests",
+    )
+
+    enable_adaptive_batching: bool = Field(
+        default=True,
+        alias="ENABLE_ADAPTIVE_BATCHING",
+        description="If true, use adaptive batching",
+    )
+
+    # === Caching Configuration ===
+    gateway_response_cache_enabled: bool = Field(
+        default=False,
+        alias="GATEWAY_RESPONSE_CACHE_ENABLED",
+        description="Enable gateway response caching",
+    )
+
+    cache_max_ttl: float = Field(
+        default=60.0,
+        alias="CACHE_MAX_TTL",
+        description="Max TTL for caches in seconds",
+    )
+
+    disable_cache_for_profiling: bool = Field(
+        default=False,
+        alias="DISABLE_CACHE_FOR_PROFILING",
+        description="Force disable caches during profiling",
+    )
+
+    gateway_cache_capacity: int = Field(
+        default=1000,
+        alias="GATEWAY_CACHE_CAPACITY",
+        description="Capacity of the gateway response cache",
+    )
+
+    retrieval_cache_capacity: int = Field(
+        default=1000,
+        alias="RETRIEVAL_CACHE_CAPACITY",
+        description="Capacity of the retrieval FAISS cache",
+    )
+
+    document_cache_capacity: int = Field(
+        default=5000,
+        alias="DOCUMENT_CACHE_CAPACITY",
+        description="Capacity of the document store cache",
+    )
+
+    fuzzy_cache_matching: bool = Field(
+        default=False,
+        alias="FUZZY_CACHE_MATCHING",
+        description="Enable fuzzy matching (token sort) for gateway cache",
+    )
+
+    # === Compression Configuration ===
+    pipeline_rpc_compression: str = Field(
+        default="none",
+        alias="PIPELINE_RPC_COMPRESSION",
+        description="Compression algorithm for RPC (none, zstd, lz4)",
+    )
+
+    pipeline_rpc_compression_level: int = Field(
+        default=3,
+        alias="PIPELINE_RPC_COMPRESSION_LEVEL",
+        description="Compression level",
+    )
+
+    # === Document Payload Configuration ===
+    documents_payload_mode: str = Field(
+        default="full",
+        alias="DOCUMENTS_PAYLOAD_MODE",
+        description="Mode for document payload transfer: 'full', 'id_only', 'compressed'",
+    )
+
     # === Pipeline Constants (Do Not Change) ===
     faiss_dim: int = Field(
         default=768,
@@ -142,6 +238,25 @@ class PipelineSettings(BaseSettings):
         default=4,
         ge=1,
         description="Batch size for generation service operations",
+    )
+
+    # === Batching Tuning Knobs ===
+    gateway_min_batch_size: int = Field(
+        default=1,
+        ge=1,
+        description="Minimum batch size for gateway adaptive batching",
+    )
+
+    retrieval_max_batch_delay_ms: int = Field(
+        default=50,
+        ge=1,
+        description="Max delay for retrieval batching",
+    )
+
+    generation_max_batch_delay_ms: int = Field(
+        default=200,
+        ge=1,
+        description="Max delay for generation batching",
     )
 
     # === Model Names ===
