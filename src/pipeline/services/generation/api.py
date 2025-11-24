@@ -11,6 +11,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request, status
 from fastapi.responses import Response
 from prometheus_client import generate_latest
 
+from ...components.document_store import DocumentStore
 from ...components.llm import LLMGenerator
 from ...components.reranker import Reranker
 from ...components.sentiment import SentimentAnalyzer
@@ -81,10 +82,17 @@ def _record_pipeline_error(error_type: str) -> None:
 async def generate(
     request: Request,
     generation_request: GenerationRequest,
-    reranker: Annotated[Reranker | None, Depends(get_component("reranker"))],
-    llm_generator: Annotated[LLMGenerator, Depends(get_component("llm_generator"))],
-    sentiment_analyzer: Annotated[SentimentAnalyzer, Depends(get_component("sentiment_analyzer"))],
-    toxicity_filter: Annotated[ToxicityFilter, Depends(get_component("toxicity_filter"))],
+    reranker: Annotated[Reranker | None, Depends(get_component("reranker"))] = None,
+    llm_generator: Annotated[LLMGenerator | None, Depends(get_component("llm_generator"))] = None,
+    sentiment_analyzer: Annotated[
+        SentimentAnalyzer | None, Depends(get_component("sentiment_analyzer"))
+    ] = None,
+    toxicity_filter: Annotated[
+        ToxicityFilter | None, Depends(get_component("toxicity_filter"))
+    ] = None,
+    document_store: Annotated[
+        DocumentStore | None, Depends(get_component("document_store"))
+    ] = None,
 ) -> GenerationResponse:
     """
     Generate responses for a batch of queries.
@@ -92,26 +100,18 @@ async def generate(
     _record_memory_usage()
 
     # Validate models are loaded
-    if (
-        llm_generator is None
-        or not getattr(llm_generator, "is_loaded", False)
-        or sentiment_analyzer is None
-        or not getattr(sentiment_analyzer, "is_loaded", False)
-        or toxicity_filter is None
-        or not getattr(toxicity_filter, "is_loaded", False)
-    ):
+    if llm_generator is None or not getattr(llm_generator, "is_loaded", False):
         _record_pipeline_error("models_not_loaded")
         raise HTTPException(
             status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-            detail="Models not loaded yet",
+            detail="LLM model not loaded yet",
         )
 
-    # Check reranker if it's provided
-    if reranker is not None and not getattr(reranker, "is_loaded", False):
-        # If reranker is provided but not loaded, that's an error?
-        # Or should we just treat it as None?
-        # Let's assume if it's injected, it should be loaded if it exists.
-        # But get_component might return None if not found.
+    # Check optional models if they are provided
+    if sentiment_analyzer is not None and not getattr(sentiment_analyzer, "is_loaded", False):
+        # If provided but not loaded, that's an issue if we expect them to be working
+        # But maybe we can just proceed?
+        # For now, let's assume if they are injected, they should be loaded.
         pass
 
     try:
@@ -120,6 +120,7 @@ async def generate(
             llm_generator=llm_generator,
             sentiment_analyzer=sentiment_analyzer,
             toxicity_filter=toxicity_filter,
+            document_store=document_store,
         )
         return service.process_batch(generation_request)
 

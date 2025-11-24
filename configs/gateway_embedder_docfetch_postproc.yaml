@@ -1,0 +1,24 @@
+---
+name: gateway_embedder_docfetch_postproc
+description: Gateway hosts Embedder, DocStore, Reranker, Sentiment, and Toxicity
+
+components:
+  - name: orchestrator
+    type: gateway
+    config:
+      retrieval_url: http://localhost:8001
+      generation_url: http://localhost:8002
+  - name: embedding_generator
+    type: embedding
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+  - name: sentiment_analyzer
+    type: sentiment
+  - name: toxicity_filter
+    type: toxicity
+
+routes:
+  - prefix: /
+    target: gateway

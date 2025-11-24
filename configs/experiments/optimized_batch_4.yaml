@@ -1,0 +1,33 @@
+---
+run_id: optimized_batch_4
+description: >
+  Combines Gateway Embedder and Retrieval Reranker optimizations with Batch
+  Size 4.
+  Node 0: Gateway + Embedder
+  Node 1: FAISS + Docs + Reranker
+  Node 2: LLM + Sentiment + Toxicity
+
+nodes:
+  - number: 0
+    profile: configs/gateway_with_embedding.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retrieval_rerank_no_embedding.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 4
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 100
+  concurrency: 4
+  rate_limit: 0.1
+  timeout: 300
+
+notes: |-
+  Optimized configuration moving Embedder to Node 0 and Reranker to Node 1.
+  Using Batch Size 4 to compare with retrieval_with_rerank.

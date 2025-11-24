@@ -1,0 +1,15 @@
+---
+name: retrieval_rerank_no_embedding
+description: Retrieval Node with Reranker but no Embedding
+
+components:
+  - name: faiss_store
+    type: faiss
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+
+routes:
+  - prefix: /retrieve
+    target: retrieval

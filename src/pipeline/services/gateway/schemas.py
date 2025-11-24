@@ -61,8 +61,8 @@ class GenerationResponse(BaseModel):
 
     request_id: str = Field(..., description="Echo of request ID")
     generated_response: str = Field(..., description="LLM generated text")
-    sentiment: str = Field(..., description="Sentiment classification")
-    is_toxic: str = Field(..., description="'true' or 'false'")
+    sentiment: str | None = Field(None, description="Sentiment classification")
+    is_toxic: str | None = Field(None, description="'true' or 'false'")
 
 
 # === Internal batch processing ===

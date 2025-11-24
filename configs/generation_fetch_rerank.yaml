@@ -1,0 +1,17 @@
+---
+name: generation_fetch_rerank
+description: >
+  Generation node with DocStore and Reranker feeding the LLM (no
+  sentiment/toxicity)
+
+components:
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+  - name: llm_generator
+    type: llm
+
+routes:
+  - prefix: /generate
+    target: generation

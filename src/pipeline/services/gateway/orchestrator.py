@@ -9,6 +9,10 @@ import time
 from opentelemetry import trace
 
 from ...components.embedding import EmbeddingGenerator
+from ...components.reranker import Reranker
+from ...components.schemas import Document
+from ...components.sentiment import SentimentAnalyzer
+from ...components.toxicity import ToxicityFilter
 from ...config import get_settings
 from ...enums import ServiceEndpoint
 from ...telemetry import (
@@ -48,6 +52,9 @@ class Orchestrator:
     ) -> None:
         """Initialize the orchestrator."""
         self.embedding_generator: EmbeddingGenerator | None = None
+        self.reranker: Reranker | None = None
+        self.sentiment_analyzer: SentimentAnalyzer | None = None
+        self.toxicity_filter: ToxicityFilter | None = None
 
         # Initialize RPC clients
         self.retrieval_client = RPCClient(
@@ -216,6 +223,26 @@ class Orchestrator:
             run_id=settings.profiling_run_id, node=node_label, stage="gateway.retrieval_rpc"
         ).set(retrieval_duration)
 
+        # Step 1.5: Rerank if local reranker is available
+        if self.reranker and getattr(self.reranker, "is_loaded", False):
+            rerank_start = time.time()
+            logger.debug("Reranking %d requests in gateway", len(retrieval_responses))
+            with profiler.track("gateway.rerank"):
+                for i, resp in enumerate(retrieval_responses):
+                    # Convert dicts to Documents
+                    docs = [Document(**d) for d in resp.docs]
+                    # Rerank
+                    reranked = self.reranker.rerank(batch.requests[i].query, docs)
+                    # Update response docs (convert back to dicts, keeping order)
+                    # We only keep top 10 or so usually, but reranker returns all or top_n
+                    # Let's assume we keep all returned by reranker
+                    resp.docs = [d.model_dump() for d in reranked]
+
+            rerank_duration = time.time() - rerank_start
+            stage_duration_gauge.labels(
+                run_id=settings.profiling_run_id, node=node_label, stage="gateway.rerank"
+            ).set(rerank_duration)
+
         # Step 2: Generate responses from Node 2
         generation_start = time.time()
         generation_requests = [
@@ -237,13 +264,46 @@ class Orchestrator:
             run_id=settings.profiling_run_id, node=node_label, stage="gateway.generation_rpc"
         ).set(generation_duration)
 
+        # Step 2.5: Post-processing (Sentiment/Toxicity) if local
+        if (self.sentiment_analyzer and getattr(self.sentiment_analyzer, "is_loaded", False)) or (
+            self.toxicity_filter and getattr(self.toxicity_filter, "is_loaded", False)
+        ):
+            postproc_start = time.time()
+            with profiler.track("gateway.postprocessing"):
+                for gen_resp in generation_responses:
+                    # Sentiment
+                    if (
+                        gen_resp.sentiment is None
+                        and self.sentiment_analyzer
+                        and getattr(self.sentiment_analyzer, "is_loaded", False)
+                    ):
+                        gen_resp.sentiment = self.sentiment_analyzer.analyze(
+                            gen_resp.generated_response
+                        )
+
+                    # Toxicity
+                    if (
+                        gen_resp.is_toxic is None
+                        and self.toxicity_filter
+                        and getattr(self.toxicity_filter, "is_loaded", False)
+                    ):
+                        is_toxic, _ = self.toxicity_filter.check(gen_resp.generated_response)
+                        gen_resp.is_toxic = "true" if is_toxic else "false"
+                        if is_toxic:
+                            gen_resp.generated_response = "[Content Filtered due to toxicity]"
+
+            postproc_duration = time.time() - postproc_start
+            stage_duration_gauge.labels(
+                run_id=settings.profiling_run_id, node=node_label, stage="gateway.postprocessing"
+            ).set(postproc_duration)
+
         # Step 3: Build final responses
         final_responses = [
             QueryResponse(
                 request_id=gen_resp.request_id,
                 generated_response=gen_resp.generated_response,
-                sentiment=gen_resp.sentiment,
-                is_toxic=gen_resp.is_toxic,
+                sentiment=gen_resp.sentiment or "neutral",  # Fallback if still None
+                is_toxic=gen_resp.is_toxic or "false",  # Fallback if still None
             )
             for gen_resp in generation_responses
         ]
@@ -424,6 +484,23 @@ class Orchestrator:
                 batch_id,
             )
             raise RPCError(f"Generation service error: {e}") from e
+
+    def set_components(
+        self,
+        embedding_generator: EmbeddingGenerator | None = None,
+        reranker: Reranker | None = None,
+        sentiment_analyzer: SentimentAnalyzer | None = None,
+        toxicity_filter: ToxicityFilter | None = None,
+    ) -> None:
+        """Inject local components."""
+        if embedding_generator:
+            self.embedding_generator = embedding_generator
+        if reranker:
+            self.reranker = reranker
+        if sentiment_analyzer:
+            self.sentiment_analyzer = sentiment_analyzer
+        if toxicity_filter:
+            self.toxicity_filter = toxicity_filter
 
     def set_embedding_generator(self, embedding_generator: EmbeddingGenerator) -> None:
         """Set the embedding generator component."""

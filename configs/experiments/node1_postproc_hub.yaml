@@ -1,0 +1,31 @@
+---
+run_id: node1_postproc_hub
+description: >
+  Node 1 acts as a "Retrieval + Postproc Hub", hosting FAISS, Docs, Reranker,
+  Sentiment, and Toxicity. Node 2 is purely for LLM generation.
+  Goal: Offload Node 2 (LLM) as much as possible.
+
+nodes:
+  - number: 0
+    profile: configs/baseline_gateway.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retrieval_postproc_hub.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 4
+  - number: 2
+    profile: configs/generation_llm_only.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 100
+  concurrency: 4
+  rate_limit: 0.1
+  timeout: 300
+
+notes: |-
+  Testing if moving Sentiment/Toxicity to Node 1 further improves throughput
+  by freeing up Node 2 resources for the LLM.

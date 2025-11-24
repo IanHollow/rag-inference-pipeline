@@ -15,6 +15,9 @@ from prometheus_client import generate_latest
 from pydantic import ValidationError
 
 from ...components.embedding import EmbeddingGenerator
+from ...components.reranker import Reranker
+from ...components.sentiment import SentimentAnalyzer
+from ...components.toxicity import ToxicityFilter
 from ...config import get_settings
 from ...dependencies import get_component
 from ...telemetry import (
@@ -60,6 +63,13 @@ async def query(
     embedding_generator: Annotated[
         EmbeddingGenerator | None, Depends(get_component("embedding_generator"))
     ] = None,
+    reranker: Annotated[Reranker | None, Depends(get_component("reranker"))] = None,
+    sentiment_analyzer: Annotated[
+        SentimentAnalyzer | None, Depends(get_component("sentiment_analyzer"))
+    ] = None,
+    toxicity_filter: Annotated[
+        ToxicityFilter | None, Depends(get_component("toxicity_filter"))
+    ] = None,
 ) -> QueryResponse:
     """
     Main query endpoint - receives client requests and orchestrates pipeline.
@@ -70,9 +80,13 @@ async def query(
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
-    # Inject embedding generator if available and not yet set
-    if embedding_generator and not orchestrator.embedding_generator:
-        orchestrator.set_embedding_generator(embedding_generator)
+    # Inject components if available
+    orchestrator.set_components(
+        embedding_generator=embedding_generator,
+        reranker=reranker,
+        sentiment_analyzer=sentiment_analyzer,
+        toxicity_filter=toxicity_filter,
+    )
 
     try:
         # Validate request

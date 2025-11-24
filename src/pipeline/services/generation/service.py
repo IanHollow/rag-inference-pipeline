@@ -11,6 +11,7 @@ import time
 
 from opentelemetry import trace
 
+from ...components.document_store import DocumentStore
 from ...components.llm import LLMGenerator
 from ...components.reranker import Reranker
 from ...components.sentiment import SentimentAnalyzer
@@ -33,6 +34,7 @@ from .metrics import (
     toxicity_duration,
 )
 from .schemas import (
+    Document,
     GenerationRequest,
     GenerationResponse,
     GenerationResponseItem,
@@ -50,13 +52,15 @@ class GenerationService:
         self,
         reranker: Reranker | None,
         llm_generator: LLMGenerator,
-        sentiment_analyzer: SentimentAnalyzer,
-        toxicity_filter: ToxicityFilter,
+        sentiment_analyzer: SentimentAnalyzer | None,
+        toxicity_filter: ToxicityFilter | None,
+        document_store: DocumentStore | None = None,
     ) -> None:
         self.reranker = reranker
         self.llm_generator = llm_generator
         self.sentiment_analyzer = sentiment_analyzer
         self.toxicity_filter = toxicity_filter
+        self.document_store = document_store
 
     def process_batch(self, generation_request: GenerationRequest) -> GenerationResponse:
         """
@@ -91,6 +95,23 @@ class GenerationService:
             response_items: list[GenerationResponseItem] = []
 
             for item in generation_request.items:
+                # Step 0: Fetch documents if needed (Doc-ID handoff)
+                if self.document_store and item.docs and not item.docs[0].content:
+                    logger.debug("Fetching content for %d documents", len(item.docs))
+                    doc_ids = [d.doc_id for d in item.docs]
+                    fetched_docs = self.document_store.fetch_documents(doc_ids)
+
+                    # Convert to Pydantic Document objects
+                    item.docs = [
+                        Document(
+                            doc_id=d.doc_id,
+                            title=d.title,
+                            content=d.content,
+                            category=d.category or "",
+                        )
+                        for d in fetched_docs
+                    ]
+
                 # Step 1: Rerank documents
                 rerank_start = time.time()
                 with (
@@ -136,32 +157,40 @@ class GenerationService:
                 ).set(llm_elapsed)
 
                 # Step 3: Sentiment Analysis
-                sentiment_start = time.time()
-                with (
-                    tracer.start_as_current_span("generation.sentiment"),
-                    profiler.track("generation.sentiment"),
-                ):
-                    sentiment_score = self.sentiment_analyzer.analyze(generated_text)
+                sentiment_score = None
+                if self.sentiment_analyzer:
+                    sentiment_start = time.time()
+                    with (
+                        tracer.start_as_current_span("generation.sentiment"),
+                        profiler.track("generation.sentiment"),
+                    ):
+                        sentiment_score = self.sentiment_analyzer.analyze(generated_text)
 
-                sentiment_elapsed = time.time() - sentiment_start
-                sentiment_duration.observe(sentiment_elapsed)
-                stage_duration_gauge.labels(
-                    run_id=settings.profiling_run_id, node=NODE_LABEL, stage="generation.sentiment"
-                ).set(sentiment_elapsed)
+                    sentiment_elapsed = time.time() - sentiment_start
+                    sentiment_duration.observe(sentiment_elapsed)
+                    stage_duration_gauge.labels(
+                        run_id=settings.profiling_run_id,
+                        node=NODE_LABEL,
+                        stage="generation.sentiment",
+                    ).set(sentiment_elapsed)
 
                 # Step 4: Toxicity Filter
-                toxicity_start = time.time()
-                with (
-                    tracer.start_as_current_span("generation.toxicity"),
-                    profiler.track("generation.toxicity"),
-                ):
-                    is_toxic, _ = self.toxicity_filter.check(generated_text)
+                is_toxic = False
+                if self.toxicity_filter:
+                    toxicity_start = time.time()
+                    with (
+                        tracer.start_as_current_span("generation.toxicity"),
+                        profiler.track("generation.toxicity"),
+                    ):
+                        is_toxic, _ = self.toxicity_filter.check(generated_text)
 
-                toxicity_elapsed = time.time() - toxicity_start
-                toxicity_duration.observe(toxicity_elapsed)
-                stage_duration_gauge.labels(
-                    run_id=settings.profiling_run_id, node=NODE_LABEL, stage="generation.toxicity"
-                ).set(toxicity_elapsed)
+                    toxicity_elapsed = time.time() - toxicity_start
+                    toxicity_duration.observe(toxicity_elapsed)
+                    stage_duration_gauge.labels(
+                        run_id=settings.profiling_run_id,
+                        node=NODE_LABEL,
+                        stage="generation.toxicity",
+                    ).set(toxicity_elapsed)
 
                 # Filter if toxic
                 final_text = generated_text
@@ -173,7 +202,7 @@ class GenerationService:
                         request_id=item.request_id,
                         generated_response=final_text,
                         sentiment=sentiment_score,
-                        is_toxic="true" if is_toxic else "false",
+                        is_toxic="true" if is_toxic else "false" if self.toxicity_filter else None,
                     )
                 )
 
