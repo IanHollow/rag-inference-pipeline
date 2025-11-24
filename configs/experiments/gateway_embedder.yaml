@@ -6,6 +6,7 @@ nodes:
     profile: configs/gateway_with_embedding.yaml
     env:
       GATEWAY_BATCH_SIZE: 8
+      ENABLE_ADAPTIVE_BATCHING: false
   - number: 1
     profile: configs/retrieval_only.yaml
   - number: 2

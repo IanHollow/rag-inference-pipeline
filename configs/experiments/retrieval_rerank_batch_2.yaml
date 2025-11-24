@@ -11,6 +11,7 @@ nodes:
     env:
       GATEWAY_BATCH_SIZE: 2
       GATEWAY_BATCH_TIMEOUT_MS: 100
+      ENABLE_ADAPTIVE_BATCHING: false
   - number: 1
     profile: configs/retriever_with_rerank.yaml
     env:

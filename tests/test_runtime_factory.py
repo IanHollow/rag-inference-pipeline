@@ -2,6 +2,7 @@ import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
+import numpy as np
 
 from pipeline.config import PipelineSettings
 from pipeline.config.profile_schema import ComponentConfig, ProfileFile, RouteConfig
@@ -14,6 +15,12 @@ class TestRuntimeFactory(unittest.TestCase):
         self.settings = PipelineSettings(
             node_number=0, pipeline_role_profile="custom", role_profile_override_path=None
         )
+        # Reset global executors to ensure clean state
+        from pipeline.services.generation import api as generation_api
+        from pipeline.services.retrieval import api as retrieval_api
+
+        retrieval_api._executor = None
+        generation_api._executor = None
 
     @patch("pipeline.runtime_factory.create_component")
     @patch("pipeline.runtime_factory.load_role_profile")
@@ -139,9 +146,21 @@ class TestRuntimeFactory(unittest.TestCase):
         # Mock components
         mock_emb = MagicMock()
         mock_emb.is_loaded = True
+        mock_emb.encode.return_value = np.array([[0.1]], dtype=np.float32)  # Mock embedding return
+
         mock_faiss = MagicMock()
         mock_faiss.is_loaded = True
+        # Mock search return
+        mock_indices = MagicMock()
+        mock_indices.tolist.return_value = [1]
+        mock_dists = MagicMock()
+        mock_dists.tolist.return_value = [0.1]
+        mock_faiss.search.return_value = ([mock_dists], [mock_indices])
+
         mock_docs = MagicMock()
+        mock_docs.fetch_documents_batch.return_value = [
+            [MagicMock(doc_id=1, title="t", content="c", category="cat")]
+        ]
 
         # Configure create_component to return appropriate mocks
         def side_effect(ctype: object, settings: object, config: object) -> MagicMock:
@@ -201,7 +220,7 @@ class TestRuntimeFactory(unittest.TestCase):
         mock_embedder = MagicMock()
         mock_embedder.is_loaded = True
         # Mock encode method which is called by retrieval endpoint
-        mock_embedder.encode.return_value = [[0.1, 0.2]]
+        mock_embedder.encode.return_value = np.array([[0.1, 0.2]], dtype=np.float32)
 
         # We need to handle multiple component creations if heuristics kick in,
         # but here we only have one component in the profile.
@@ -329,7 +348,7 @@ class TestRuntimeFactory(unittest.TestCase):
             # Mock components
             mock_embedder = MagicMock()
             mock_embedder.is_loaded = True
-            mock_embedder.encode.return_value = [[0.1]]
+            mock_embedder.encode.return_value = np.array([[0.1]], dtype=np.float32)
 
             mock_faiss = MagicMock()
             mock_faiss.is_loaded = True

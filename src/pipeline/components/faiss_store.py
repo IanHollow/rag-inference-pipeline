@@ -63,6 +63,13 @@ class FAISSStore:
                 index_size,
                 self.settings.faiss_dim,
             )
+
+            # Warmup
+            if index_size > 0 and self._index is not None:
+                logger.info("Warming up FAISS index...")
+                dummy_vector = np.zeros((1, self.settings.faiss_dim), dtype=np.float32)
+                self._index.search(dummy_vector, 1)
+                logger.info("FAISS index warmup complete")
         except Exception as e:
             logger.exception("Failed to load FAISS index: %s", e)
             raise RuntimeError(f"FAISS index loading failed: {e}") from e

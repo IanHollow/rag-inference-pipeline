@@ -12,6 +12,7 @@ nodes:
     env:
       GATEWAY_BATCH_SIZE: 8
       GATEWAY_BATCH_TIMEOUT_MS: 100
+      ENABLE_ADAPTIVE_BATCHING: true
   - number: 1
     profile: configs/retrieval_only.yaml
     env:

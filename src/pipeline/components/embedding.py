@@ -4,13 +4,16 @@ Embedding generation module for retrieval service.
 Manages persistent SentenceTransformer model with warm cache and batch encoding.
 """
 
+import hashlib
 import logging
+import threading
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch
 
 from ..config import PipelineSettings
+from ..utils.cache import LRUCache
 
 logger = logging.getLogger(__name__)
 
@@ -18,9 +21,6 @@ logger = logging.getLogger(__name__)
 class EmbeddingGenerator:
     """
     Manages embedding generation with persistent model loading.
-
-    The model is loaded once and kept in memory for the lifetime of the service.
-    Supports batch encoding for efficiency.
     """
 
     def __init__(self, settings: PipelineSettings) -> None:
@@ -32,15 +32,29 @@ class EmbeddingGenerator:
         """
         self.settings = settings
         self.model_name = settings.embedding_model_name
-        self.device = torch.device("cpu" if settings.only_cpu else "cuda")
+
+        if settings.only_cpu:
+            device_name = "cpu"
+        elif torch.cuda.is_available():
+            device_name = "cuda"
+        elif torch.backends.mps.is_available():
+            device_name = "mps"
+        else:
+            device_name = "cpu"
+
+        self.device = torch.device(device_name)
         self._model: SentenceTransformer | None = None
         self._is_loaded = False
+        self._lock = threading.Lock()
+
+        # Initialize cache
+        self.cache = LRUCache[str, np.ndarray](
+            capacity=10000, ttl=settings.cache_max_ttl, name="embedding_cache"
+        )
 
     def load(self) -> None:
         """
         Load the SentenceTransformer model into memory.
-
-        This should be called during service startup to warm the cache.
         """
         if self._is_loaded:
             logger.info("Embedding model already loaded")
@@ -51,6 +65,14 @@ class EmbeddingGenerator:
             self._model = SentenceTransformer(self.model_name).to(self.device)
             self._model.eval()
             self._is_loaded = True
+
+            # Warmup
+            logger.info("Warming up embedding model...")
+            # Use a longer text to trigger compilation for realistic sequence lengths
+            dummy_text = "This is a test sentence for warmup. " * 10
+            self._model.encode([dummy_text], convert_to_numpy=True)
+            logger.info("Embedding model warmup complete")
+
             logger.info("Embedding model loaded successfully on %s", self.device)
         except Exception as e:
             logger.exception("Failed to load embedding model: %s", e)
@@ -78,25 +100,66 @@ class EmbeddingGenerator:
 
         logger.debug("Encoding batch of %d texts", len(texts))
 
-        try:
-            embeddings = self._model.encode(
+        # If cache is disabled, encode all
+        if getattr(self.settings, "disable_cache_for_profiling", True):
+            return self._model.encode(
                 texts,
-                normalize_embeddings=True,
-                convert_to_numpy=True,
-                batch_size=len(texts),  # Process all texts in one batch
+                batch_size=32,
                 show_progress_bar=False,
+                convert_to_numpy=True,
+                normalize_embeddings=True,
             )
-            logger.debug("Generated embeddings with shape %s", embeddings.shape)
-            return embeddings
-        except Exception as e:
-            logger.exception("Failed to encode texts: %s", e)
-            raise
+
+        # Check cache
+        results: list[np.ndarray | None] = [None] * len(texts)
+        missing_indices = []
+        missing_texts = []
+
+        with self._lock:
+            for i, text in enumerate(texts):
+                # Normalize text for cache key
+                key = hashlib.sha256(text.strip().encode()).hexdigest()
+                cached = self.cache.get(key)
+                if cached is not None:
+                    results[i] = cached
+                else:
+                    missing_indices.append(i)
+                    missing_texts.append(text)
+
+        # Encode missing
+        if missing_texts:
+            logger.debug("Cache miss for %d/%d texts", len(missing_texts), len(texts))
+            try:
+                embeddings = self._model.encode(
+                    missing_texts,
+                    batch_size=32,
+                    show_progress_bar=False,
+                    convert_to_numpy=True,
+                    normalize_embeddings=True,
+                )
+
+                with self._lock:
+                    for i, embedding in zip(missing_indices, embeddings, strict=False):
+                        results[i] = embedding
+                        # Update cache
+                        key = hashlib.sha256(texts[i].strip().encode()).hexdigest()
+                        self.cache.put(key, embedding)
+            except Exception as e:
+                logger.exception("Failed to encode texts: %s", e)
+                raise
+        else:
+            logger.debug("Cache hit for all %d texts", len(texts))
+
+        return np.array(results)
+
+    def clear_cache(self) -> None:
+        """Clear the embedding cache safely."""
+        with self._lock:
+            self.cache.clear()
 
     def unload(self) -> None:
         """
         Unload the model from memory.
-
-        This is typically called during service shutdown.
         """
         if self._is_loaded:
             logger.info("Unloading embedding model")

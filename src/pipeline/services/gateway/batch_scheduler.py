@@ -13,11 +13,66 @@ import logging
 import time
 from typing import Generic, TypeVar
 
-from .schemas import PendingRequest
+from ...config import get_settings
+from ...telemetry import batch_flush_counter, queue_depth_gauge
+from .schemas import PendingRequest, PendingRequestStruct
 
 logger = logging.getLogger(__name__)
+settings = get_settings()
 
 T = TypeVar("T")
+
+
+class AdaptiveBatchPolicy:
+    """
+    Policy for dynamically adjusting batch size and delay based on load.
+    """
+
+    def __init__(
+        self,
+        min_batch_size: int = 1,
+        max_batch_size: int = 32,
+        min_delay_sec: float = 0.05,
+        max_delay_sec: float = 0.5,
+    ) -> None:
+        self.min_batch_size = min_batch_size
+        self.max_batch_size = max_batch_size
+        self.min_delay_sec = min_delay_sec
+        self.max_delay_sec = max_delay_sec
+
+        # Current state
+        self.current_batch_size = float(min_batch_size)
+        self.current_delay = min_delay_sec
+
+    def update(self, queue_depth: int) -> tuple[int, float]:
+        """
+        Update policy based on current queue depth.
+
+        Returns:
+            Tuple of (new_batch_size, new_delay_seconds)
+        """
+        # If queue is building up, increase batch size and delay to improve throughput
+        if queue_depth > 10:
+            target_batch = self.max_batch_size
+            target_delay = self.max_delay_sec
+        elif queue_depth > 5:
+            target_batch = self.max_batch_size // 2
+            target_delay = self.max_delay_sec / 2
+        else:
+            target_batch = self.min_batch_size
+            target_delay = self.min_delay_sec
+
+        # Smooth transitions using EWMA-like approach
+        self.current_batch_size = (self.current_batch_size * 0.7) + (target_batch * 0.3)
+        self.current_delay = (self.current_delay * 0.7) + (target_delay * 0.3)
+
+        # Clamp values
+        final_batch_size = max(
+            self.min_batch_size, min(int(self.current_batch_size), self.max_batch_size)
+        )
+        final_delay = max(self.min_delay_sec, min(self.current_delay, self.max_delay_sec))
+
+        return final_batch_size, final_delay
 
 
 @dataclass
@@ -25,7 +80,7 @@ class Batch(Generic[T]):
     """Represents a batch of requests ready for processing."""
 
     batch_id: int
-    requests: list[PendingRequest]
+    requests: list[PendingRequest | PendingRequestStruct]
     futures: list[asyncio.Future[T]] = field(default_factory=list)
     created_at: float = field(default_factory=time.time)
 
@@ -44,6 +99,8 @@ class BatchScheduler(Generic[T]):
         batch_size: int,
         max_batch_delay_ms: int,
         process_batch_fn: Callable[[Batch[T]], Awaitable[list[T]]],
+        service_name: str = "gateway",
+        enable_adaptive: bool = False,
     ) -> None:
         """
         Initialize the batch scheduler.
@@ -52,12 +109,28 @@ class BatchScheduler(Generic[T]):
             batch_size: Maximum number of requests per batch
             max_batch_delay_ms: Maximum milliseconds to wait for a full batch
             process_batch_fn: Async function to call when a batch is ready
+            service_name: Name of the service for metrics
+            enable_adaptive: Whether to enable adaptive batching
         """
         self.batch_size = batch_size
         self.max_batch_delay_sec = max_batch_delay_ms / 1000.0
         self.process_batch_fn = process_batch_fn
+        self.service_name = service_name
+        self.enable_adaptive = enable_adaptive
 
-        self._pending_requests: list[PendingRequest] = []
+        self.policy: AdaptiveBatchPolicy | None
+        if enable_adaptive:
+            # Use the configured batch_size and timeout as the upper limits for the adaptive policy
+            self.policy = AdaptiveBatchPolicy(
+                min_batch_size=1,
+                max_batch_size=batch_size,
+                min_delay_sec=min(0.01, self.max_batch_delay_sec),
+                max_delay_sec=self.max_batch_delay_sec,
+            )
+        else:
+            self.policy = None
+
+        self._pending_requests: list[PendingRequest | PendingRequestStruct] = []
         self._pending_futures: list[asyncio.Future[T]] = []
         self._batch_counter = 0
         self._lock = asyncio.Lock()
@@ -86,19 +159,19 @@ class BatchScheduler(Generic[T]):
         # Process remaining requests
         async with self._lock:
             if self._pending_requests:
-                await self._flush_batch()
+                await self._flush_batch(reason="shutdown")
 
         logger.info("BatchScheduler stopped")
 
-    async def enqueue(self, request: PendingRequest) -> T:
+    async def enqueue(self, request: PendingRequest | PendingRequestStruct) -> T:
         """
-        Add a request to the batch queue and wait for its result.
+        Add a request to the queue and wait for the result.
 
         Args:
             request: The request to process
 
         Returns:
-            The result of processing this request
+            The result of processing the request
         """
         if not self._running:
             msg = "BatchScheduler is not running"
@@ -112,6 +185,21 @@ class BatchScheduler(Generic[T]):
             self._pending_requests.append(request)
             self._pending_futures.append(future)
 
+            # Update adaptive policy if enabled
+            if self.enable_adaptive and self.policy:
+                new_size, new_delay = self.policy.update(len(self._pending_requests))
+                if new_size != self.batch_size:
+                    logger.debug("Adaptive batching: size=%d, delay=%.3fs", new_size, new_delay)
+                    self.batch_size = new_size
+                    self.max_batch_delay_sec = new_delay
+
+            # Update queue depth metric
+            queue_depth_gauge.labels(
+                run_id=settings.profiling_run_id,
+                node=str(settings.node_number),
+                service=self.service_name,
+            ).set(len(self._pending_requests))
+
             logger.debug(
                 "Enqueued request %s (pending: %d/%d)",
                 request.request_id,
@@ -121,7 +209,7 @@ class BatchScheduler(Generic[T]):
 
             # If batch is full, flush immediately
             if len(self._pending_requests) >= self.batch_size:
-                await self._flush_batch()
+                await self._flush_batch(reason="full")
             elif len(self._pending_requests) == 1:
                 # First request in batch, start timer
                 self._timer_task = asyncio.create_task(self._batch_timer())
@@ -138,12 +226,12 @@ class BatchScheduler(Generic[T]):
                     logger.debug(
                         "Batch timer expired, flushing %d requests", len(self._pending_requests)
                     )
-                    await self._flush_batch()
+                    await self._flush_batch(reason="timeout")
         except asyncio.CancelledError:
             # Timer was cancelled because batch was flushed early
             pass
 
-    async def _flush_batch(self) -> None:
+    async def _flush_batch(self, reason: str = "unknown") -> None:
         """
         Flush the current batch for processing.
 
@@ -155,6 +243,14 @@ class BatchScheduler(Generic[T]):
         # Cancel timer if it's running
         if self._timer_task and not self._timer_task.done():
             self._timer_task.cancel()
+
+        # Record flush reason
+        batch_flush_counter.labels(
+            run_id=settings.profiling_run_id,
+            node=str(settings.node_number),
+            service=self.service_name,
+            reason=reason,
+        ).inc()
 
         # Create batch
         self._batch_counter += 1
@@ -168,11 +264,19 @@ class BatchScheduler(Generic[T]):
         self._pending_requests.clear()
         self._pending_futures.clear()
 
+        # Update queue depth metric
+        queue_depth_gauge.labels(
+            run_id=settings.profiling_run_id,
+            node=str(settings.node_number),
+            service=self.service_name,
+        ).set(0)
+
         logger.info(
-            "Batch %d <- %d requests (age: %.3fs)",
+            "Batch %d <- %d requests (age: %.3fs, reason: %s)",
             batch.batch_id,
             len(batch),
             time.time() - batch.created_at,
+            reason,
         )
 
         # Process batch asynchronously (don't block enqueue)

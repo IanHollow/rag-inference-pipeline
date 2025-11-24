@@ -58,6 +58,11 @@ class ToxicityFilter:
 
             self._loaded = True
 
+            # Warmup
+            logger.info("Warming up toxicity model...")
+            self.pipeline("This is a test sentence for warmup.")
+            logger.info("Toxicity model warmup complete")
+
             elapsed = time.time() - start_time
             logger.info("Toxicity model loaded in %.2f seconds", elapsed)
 

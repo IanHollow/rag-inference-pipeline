@@ -6,10 +6,12 @@ sentiment analysis, toxicity filtering, and end-to-end processing.
 """
 
 from collections.abc import Generator
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
+import lz4.frame  # type: ignore
+import msgspec
 import pytest
 import torch
 
@@ -25,6 +27,9 @@ from pipeline.services.generation.schemas import (
     GenerationResponse,
     RerankedDocument,
 )
+
+if TYPE_CHECKING:
+    from fastapi import FastAPI
 
 
 class TestSchemas:
@@ -120,6 +125,26 @@ class TestSchemas:
         assert response.batch_id == "batch_1"
         assert len(response.items) == 1
         assert response.processing_time == 1.5
+
+    def test_generation_request_item_base64_logging(self, caplog: pytest.LogCaptureFixture) -> None:
+        """Test that base64 decoding does not emit warning logs on success."""
+        import base64
+        import logging
+
+        # Create a valid base64 string
+        content = b"compressed content"
+        encoded = base64.b64encode(content).decode()
+
+        with caplog.at_level(logging.WARNING):
+            GenerationRequestItem(
+                request_id="test_req_1",
+                query="Test query",
+                docs=[],
+                compressed_docs=encoded,
+            )
+
+        # Assert no warnings were captured
+        assert not caplog.records
 
 
 class TestReranker:
@@ -449,7 +474,11 @@ class TestGenerationService:
         from fastapi import FastAPI
 
         from pipeline.component_registry import ComponentRegistry
+        from pipeline.services.generation import api
         from pipeline.services.generation.api import router
+
+        # Reset global executor
+        api._executor = None
 
         app = FastAPI()
         app.include_router(router, prefix="/generate")
@@ -531,6 +560,83 @@ class TestGenerationService:
         assert data["items"][0]["sentiment"] == "positive"
         assert data["items"][0]["is_toxic"] == "false"
 
+    def test_generate_endpoint_compressed_payload(self, mock_app: TestClient) -> None:
+        """Test generation request with compressed payload."""
+        # Create compressed docs
+        from pipeline.components.schemas import DocumentStruct
+
+        docs = [
+            DocumentStruct(
+                doc_id=1,
+                title="Compressed Doc",
+                content="Compressed content",
+                category="test",
+            )
+        ]
+        serialized = msgspec.json.encode(docs)
+        compressed = lz4.frame.compress(serialized)
+
+        # We need to encode bytes to string for JSON transport in test client
+        # But wait, the API expects bytes for compressed_docs if it's a Pydantic model?
+        # Pydantic BaseJSONModel handles bytes by base64 encoding/decoding usually?
+        # Or maybe the test client needs to send it as a specific format.
+        # The schema says `compressed_docs: bytes | None`.
+        # When sending JSON via TestClient, bytes are not automatically handled unless we base64 encode them
+        # and the Pydantic model validator handles it.
+        # However, standard Pydantic v2 doesn't automatically decode base64 strings to bytes for `bytes` fields in JSON mode unless configured.
+        # But let's assume the standard behavior or that we can pass it if we were using msgspec directly.
+        # Since we are using `json=` in TestClient, we can't pass raw bytes.
+        # Let's try passing it as a string (if Pydantic handles it) or skip the JSON encoding issue by mocking the request object if possible.
+        # Actually, `BaseJSONModel` might handle it.
+        # Let's check `BaseJSONModel` definition if I can.
+        # But for now, let's try to send it as a string (latin-1 decoded) which is how it might look if it was raw bytes in a dict,
+        # but JSON doesn't support raw bytes.
+        # The real RPC client uses `msgspec.json.encode` which handles bytes by base64 encoding them by default?
+        # Or maybe it expects the user to handle it.
+        # If I look at `src/pipeline/services/gateway/rpc_client.py`, it uses `msgspec.json.encode`.
+        # `msgspec` encodes bytes as base64 strings by default.
+        # So I should base64 encode it here.
+
+        import base64
+
+        compressed_b64 = base64.b64encode(compressed).decode("utf-8")
+
+        request_data = {
+            "batch_id": "test_batch_compressed",
+            "items": [
+                {
+                    "request_id": "req_compressed",
+                    "query": "Test query",
+                    "docs": [],  # Empty docs
+                    "compressed_docs": compressed_b64,
+                }
+            ],
+        }
+
+        # We need to patch the GenerationService to ensure it actually decompresses
+        # But here we are testing the API layer and Executor passing it through.
+        # The `mock_app` uses `GenerationService` which uses `GenerationExecutor`.
+        # The `GenerationExecutor` uses `BatchScheduler`.
+        # If the fix works, `GenerationService.process_batch` (or `_process_batch_sync`) will receive the compressed docs
+        # and decompress them.
+        # The `mock_llm` will receive the decompressed docs.
+        # So we can check if `mock_llm.generate` was called with the correct docs.
+
+        # Access the mock_reranker from the app state
+        app = cast("FastAPI", mock_app.app)
+        mock_reranker = app.state.registry.get("reranker")
+
+        response = mock_app.post("/generate", json=request_data)
+        assert response.status_code == 200
+
+        # Verify Reranker was called with the decompressed doc
+        args, _ = mock_reranker.rerank.call_args
+        query, input_docs = args
+        assert query == "Test query"
+        assert len(input_docs) == 1
+        assert input_docs[0].title == "Compressed Doc"
+        assert input_docs[0].content == "Compressed content"
+
     def test_generate_endpoint_validation_error(self, mock_app: TestClient) -> None:
         """Test generation request with invalid data."""
         # Missing required field
@@ -560,3 +666,25 @@ class TestGenerationService:
         assert response.status_code == 200
         # Should return Prometheus text format
         assert "generation_requests_total" in response.text or response.text == ""
+
+    def test_initialization_error_id_only_no_store(self) -> None:
+        """Test that initialization fails if id_only mode is used without document store."""
+        from unittest.mock import patch
+
+        from pipeline.services.generation.service import GenerationService
+
+        mock_llm = MagicMock()
+
+        with patch("pipeline.services.generation.service.settings") as mock_settings:
+            mock_settings.documents_payload_mode = "id_only"
+
+            with pytest.raises(
+                ValueError, match="Configuration Error: DOCUMENTS_PAYLOAD_MODE='id_only'"
+            ):
+                GenerationService(
+                    reranker=None,
+                    llm_generator=mock_llm,
+                    sentiment_analyzer=None,
+                    toxicity_filter=None,
+                    document_store=None,
+                )

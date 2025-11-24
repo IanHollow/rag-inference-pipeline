@@ -6,7 +6,7 @@ Orchestrates the ML pipeline.
 
 import logging
 import time
-from typing import Annotated
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.responses import Response
@@ -174,6 +174,37 @@ async def query(
             error_type="unknown",
         ).inc()
         raise HTTPException(status_code=500, detail="Internal server error") from e
+
+
+@router.post("/clear_cache")
+async def clear_cache(
+    orchestrator: Annotated[Orchestrator, Depends(get_component("orchestrator"))],
+) -> dict[str, Any]:
+    """Clear the gateway response cache and downstream caches."""
+    results = {}
+
+    if orchestrator:
+        # Clear Gateway Cache
+        orchestrator.query_cache.clear()
+        results["gateway"] = "cleared"
+        logger.info("Gateway cache cleared")
+
+        # Clear Downstream Caches
+        if orchestrator.retrieval_client:
+            success = await orchestrator.retrieval_client.clear_cache(
+                endpoint="/retrieve/clear_cache"
+            )
+            results["retrieval"] = "cleared" if success else "failed"
+
+        if orchestrator.generation_client:
+            success = await orchestrator.generation_client.clear_cache(
+                endpoint="/generate/clear_cache"
+            )
+            results["generation"] = "cleared" if success else "failed"
+    else:
+        results["gateway"] = "error: orchestrator not initialized"
+
+    return results
 
 
 @router.get("/metrics", response_class=Response)

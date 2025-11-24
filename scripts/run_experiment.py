@@ -153,13 +153,19 @@ def run_experiment(
         # Run Workload
         workload = manifest.get("workload", {})
         requests_count = workload.get("requests", 10)
+        concurrency = workload.get("concurrency", 1)
+        rate_limit = workload.get("rate_limit", 0.1)
 
-        print(f"Running workload: {requests_count} requests...")
+        print(f"Running workload: {requests_count} requests (concurrency={concurrency})...")
         profile_cmd = [
             sys.executable,
             str(REPO_ROOT / "scripts" / "profile_pipeline.py"),
             "--requests",
             str(requests_count),
+            "--concurrency",
+            str(concurrency),
+            "--rate-limit",
+            str(rate_limit),
             "--no-interactive",
             "--output-dir",
             str(output_dir / "profile_data"),

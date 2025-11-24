@@ -97,6 +97,69 @@ memory_gauge = get_metric(
     ["run_id", "node", "service", "type"],  # type=rss/vms/percent
 )
 
+# === Queue & Worker Metrics ===
+
+queue_depth_gauge = get_metric(
+    "pipeline_queue_depth",
+    Gauge,
+    "Current depth of processing queues",
+    ["run_id", "node", "service"],
+)
+
+# === Cache Metrics ===
+
+cache_hits_total = get_metric(
+    "pipeline_cache_hits_total",
+    Counter,
+    "Total number of cache hits",
+    ["run_id", "node", "cache_name"],
+)
+
+cache_misses_total = get_metric(
+    "pipeline_cache_misses_total",
+    Counter,
+    "Total number of cache misses",
+    ["run_id", "node", "cache_name"],
+)
+
+cache_evictions_total = get_metric(
+    "pipeline_cache_evictions_total",
+    Counter,
+    "Total number of cache evictions",
+    ["run_id", "node", "cache_name"],
+)
+
+
+queue_depth_gauge = get_metric(
+    "pipeline_queue_depth",
+    Gauge,
+    "Current number of requests waiting in queue",
+    ["run_id", "node", "service"],
+)
+
+batch_flush_counter = get_metric(
+    "pipeline_batch_flush_total",
+    Counter,
+    "Number of batches flushed by reason",
+    ["run_id", "node", "service", "reason"],  # reason=timeout/full
+)
+
+worker_utilization_gauge = get_metric(
+    "pipeline_worker_utilization",
+    Gauge,
+    "Number of active workers/threads",
+    ["run_id", "node", "service"],
+)
+
+# === Cache Metrics ===
+
+cache_hit_counter = get_metric(
+    "pipeline_cache_hits_total",
+    Counter,
+    "Cache hits and misses",
+    ["run_id", "node", "service", "cache_type", "result"],  # result=hit/miss
+)
+
 # === Error Metrics ===
 
 error_counter = get_metric(
@@ -110,3 +173,22 @@ error_counter = get_metric(
         "error_type",
     ],  # error_type=rpc_error/timeout/validation/oom/unknown
 )
+
+# === Compression Metrics ===
+
+compression_ratio_histogram = get_metric(
+    "pipeline_compression_ratio",
+    Histogram,
+    "Compression ratio (original / compressed)",
+    ["run_id", "node", "direction", "algorithm"],  # direction=inbound/outbound
+    buckets=[1.0, 1.5, 2.0, 3.0, 5.0, 10.0, 20.0],
+)
+
+compressed_bytes_counter = get_metric(
+    "pipeline_compressed_bytes_total",
+    Counter,
+    "Total bytes processed by compression",
+    ["run_id", "node", "direction", "algorithm", "type"],  # type=original/compressed
+)
+
+# === Stage Duration Metrics ===

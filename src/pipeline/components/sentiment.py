@@ -69,6 +69,11 @@ class SentimentAnalyzer:
 
             self._loaded = True
 
+            # Warmup
+            logger.info("Warming up sentiment model...")
+            self.pipeline("This is a test sentence for warmup.")
+            logger.info("Sentiment model warmup complete")
+
             elapsed = time.time() - start_time
             logger.info("Sentiment model loaded in %.2f seconds", elapsed)
 
