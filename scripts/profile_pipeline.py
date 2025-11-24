@@ -295,6 +295,13 @@ def main() -> int:
         help="Number of concurrent requests (default: 1)",
     )
     parser.add_argument(
+        "--preset",
+        type=str,
+        choices=["default", "saturation", "latency"],
+        default=None,
+        help="Workload preset (overrides requests and concurrency)",
+    )
+    parser.add_argument(
         "--output-dir",
         type=Path,
         default=ARTIFACTS_DIR,
@@ -317,6 +324,16 @@ def main() -> int:
     )
 
     args = parser.parse_args()
+
+    # Apply presets
+    if args.preset == "saturation":
+        print("Using 'saturation' preset: 200 requests, 50 concurrency")
+        args.requests = 200
+        args.concurrency = 50
+    elif args.preset == "latency":
+        print("Using 'latency' preset: 50 requests, 1 concurrency")
+        args.requests = 50
+        args.concurrency = 1
 
     # Determine batch sizes to test
     if args.batch_sizes:

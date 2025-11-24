@@ -56,19 +56,19 @@ trap cleanup SIGINT SIGTERM EXIT
 
 # Start Node 0 (Gateway)
 echo "Starting Node 0 (Gateway)..."
-NODE_NUMBER=0 python -m pipeline.runtime > logs/node0-gateway.log 2>&1 &
+NODE_NUMBER=0 ./run.sh > logs/node0-gateway.log 2>&1 &
 PIDS+=($!)
 sleep 1
 
 # Start Node 1 (Retrieval)
 echo "Starting Node 1 (Retrieval)..."
-NODE_NUMBER=1 python -m pipeline.runtime > logs/node1-retrieval.log 2>&1 &
+NODE_NUMBER=1 ./run.sh > logs/node1-retrieval.log 2>&1 &
 PIDS+=($!)
 sleep 1
 
 # Start Node 2 (Generation)
 echo "Starting Node 2 (Generation)..."
-NODE_NUMBER=2 python -m pipeline.runtime > logs/node2-generation.log 2>&1 &
+NODE_NUMBER=2 ./run.sh > logs/node2-generation.log 2>&1 &
 PIDS+=($!)
 sleep 1
 

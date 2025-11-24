@@ -203,7 +203,7 @@ class GenerationService:
                 ):
                     # Use top k documents for context
                     context_docs = reranked_docs[:3]  # Top 3
-                    logger.warning("Calling LLM generator with %d docs", len(context_docs))
+                    logger.info("Calling LLM generator with %d docs", len(context_docs))
                     generated_text = self.llm_generator.generate(item.query, context_docs)
 
                     # Log token/char counts for profiling
