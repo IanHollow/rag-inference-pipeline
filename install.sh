@@ -7,7 +7,7 @@ if [ -d ".venv" ]; then
 	rm -rf .venv
 fi
 
-python3 -m venv .venv
+python3 -m virtualenv .venv
 # Activate the virtual environment
 # shellcheck disable=SC1091
 . .venv/bin/activate
