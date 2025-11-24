@@ -53,7 +53,7 @@ class FAISSStore:
 
         logger.info("Loading FAISS index from %s", self.index_path)
         try:
-            self._index = faiss.read_index(str(self.index_path))
+            self._index = faiss.read_index(str(self.index_path), faiss.IO_FLAG_MMAP)
             self._is_loaded = True
 
             # Log index info
