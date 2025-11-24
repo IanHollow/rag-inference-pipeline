@@ -87,6 +87,8 @@ class DocumentStore:
         self.db_path = Path(settings.documents_dir) / "documents.db"
         self._local = threading.local()
         self._lock = threading.Lock()
+        self._memory_db_uri = "file:documents_cache?mode=memory&cache=shared"
+        self._shared_memory_conn: sqlite3.Connection | None = None
 
         # Validate database exists
         if not self.db_path.exists():
@@ -100,6 +102,7 @@ class DocumentStore:
         )
 
         logger.info("Initialized DocumentStore with database at %s", self.db_path)
+        self._initialize_in_memory_database()
 
     def _get_connection(self) -> sqlite3.Connection:
         """
@@ -112,7 +115,11 @@ class DocumentStore:
         """
         if not hasattr(self._local, "conn"):
             logger.debug("Creating new SQLite connection for thread %s", threading.get_ident())
-            self._local.conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            if self._shared_memory_conn is not None:
+                conn = sqlite3.connect(self._memory_db_uri, uri=True, check_same_thread=False)
+            else:
+                conn = sqlite3.connect(str(self.db_path), check_same_thread=False)
+            self._local.conn = conn
             # Enable row factory for dict-like access
             self._local.conn.row_factory = sqlite3.Row
         return self._local.conn
@@ -130,6 +137,36 @@ class DocumentStore:
             self._local.doc_id_table_initialized = True
         cursor.execute("DELETE FROM temp_doc_ids")
 
+    def _initialize_in_memory_database(self) -> None:
+        """
+        Copy the on-disk SQLite database into a shared in-memory instance.
+
+        This keeps the entire document table resident in RAM for fast lookups.
+        """
+        with self._lock:
+            if self._shared_memory_conn is not None:
+                return
+
+            logger.info("Copying %s into shared in-memory SQLite", self.db_path)
+            disk_conn = sqlite3.connect(str(self.db_path))
+            disk_conn.row_factory = sqlite3.Row
+            memory_conn = sqlite3.connect(self._memory_db_uri, uri=True, check_same_thread=False)
+
+            try:
+                disk_conn.backup(memory_conn)
+                self._shared_memory_conn = memory_conn
+                size_mb = self.db_path.stat().st_size / (1024 * 1024)
+                logger.info("Document DB copied into RAM (%.2f MB)", size_mb)
+            except sqlite3.Error as e:
+                logger.warning(
+                    "Failed to copy document DB into memory, falling back to on-disk mode: %s",
+                    e,
+                )
+                memory_conn.close()
+                self._shared_memory_conn = None
+            finally:
+                disk_conn.close()
+
     def fetch_documents(self, doc_ids: list[int]) -> list[Document]:
         """
         Fetch documents by their IDs.
@@ -144,8 +181,8 @@ class DocumentStore:
             return []
 
         # Check cache first
-        cached_docs = {}
-        missing_ids = []
+        cached_docs: dict[int, Document] = {}
+        missing_ids: list[int] = []
 
         disable_cache = getattr(self.settings, "disable_cache_for_profiling", True)
 
@@ -157,10 +194,8 @@ class DocumentStore:
                     cached = self.cache.get(doc_id)
                     if cached:
                         try:
-                            # Cast to Any to avoid mypy error about unpacking dict[str, str | int]
                             cached_docs[doc_id] = Document(**cast("dict[str, Any]", cached))
                         except Exception:
-                            # Invalid cache entry
                             missing_ids.append(doc_id)
                     else:
                         missing_ids.append(doc_id)
@@ -257,6 +292,10 @@ class DocumentStore:
             logger.info("Closing SQLite connection")
             self._local.conn.close()
             delattr(self._local, "conn")
+        if self._shared_memory_conn is not None:
+            logger.info("Closing shared in-memory document database")
+            self._shared_memory_conn.close()
+            self._shared_memory_conn = None
 
     def __repr__(self) -> str:
         """String representation of the store."""

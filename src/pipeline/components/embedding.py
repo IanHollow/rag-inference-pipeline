@@ -4,9 +4,12 @@ Embedding generation module for retrieval service.
 Manages persistent SentenceTransformer model with warm cache and batch encoding.
 """
 
+import builtins
+from collections.abc import Callable
 import hashlib
 import logging
 import threading
+from typing import Any, TypeVar
 
 import numpy as np
 from sentence_transformers import SentenceTransformer
@@ -14,6 +17,16 @@ import torch
 
 from ..config import PipelineSettings
 from ..utils.cache import LRUCache
+
+T = TypeVar("T", bound=Callable[..., Any])
+
+
+def _noop_profile(func: T) -> T:
+    return func
+
+
+profile = getattr(builtins, "profile", _noop_profile)
+
 
 logger = logging.getLogger(__name__)
 
@@ -78,6 +91,7 @@ class EmbeddingGenerator:
             logger.exception("Failed to load embedding model: %s", e)
             raise
 
+    @profile
     def encode(self, texts: list[str]) -> np.ndarray:
         """
         Generate embeddings for a batch of texts.

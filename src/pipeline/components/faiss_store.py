@@ -53,7 +53,27 @@ class FAISSStore:
 
         logger.info("Loading FAISS index from %s", self.index_path)
         try:
-            self._index = faiss.read_index(str(self.index_path), faiss.IO_FLAG_MMAP)
+            io_flags = 0
+            if getattr(self.settings, "faiss_use_mmap", False):
+                io_flags = faiss.IO_FLAG_MMAP
+                logger.info("FAISS mmap mode enabled; index will be memory-mapped")
+
+            if io_flags:
+                self._index = faiss.read_index(str(self.index_path), io_flags)
+            else:
+                # Default path eagerly loads the entire index into RAM
+                self._index = faiss.read_index(str(self.index_path))
+
+            # Move to GPU if configured
+            if not self.settings.only_cpu:
+                try:
+                    logger.info("Moving FAISS index to GPU...")
+                    res = faiss.StandardGpuResources()
+                    self._index = faiss.index_cpu_to_gpu(res, 0, self._index)
+                    logger.info("FAISS index moved to GPU")
+                except Exception as e:
+                    logger.warning("Failed to move FAISS index to GPU, falling back to CPU: %s", e)
+
             self._is_loaded = True
 
             # Log index info

@@ -141,7 +141,7 @@ class GenerationExecutor:
             )
 
         gen_req = GenerationRequest(batch_id=str(batch.batch_id), items=items)
-        logger.warning("Processing batch sync with %d items", len(items))
+        logger.info("Processing batch sync with %d items", len(items))
 
         # Instantiate Service
         # We need to cast components because registry.get returns object

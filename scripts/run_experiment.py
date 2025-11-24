@@ -129,6 +129,21 @@ def run_experiment(
             env["ROLE_PROFILE_OVERRIDE_PATH"] = str(abs_profile_path)
             env["PROFILING_RUN_ID"] = full_run_id
 
+            # Check for profiling configuration in manifest
+            profiling_config = manifest.get("profiling", {})
+            if profiling_config.get("enabled", False) or manifest.get(
+                "profile_with_scalene", False
+            ):
+                env["PROFILE_WITH_SCALENE"] = "1"
+                # Disable built-in profiling/tracing to avoid overhead when using Scalene
+                env["ENABLE_PROFILING"] = "0"
+                env["ENABLE_TRACING"] = "0"
+
+                # Add any other profiling env vars
+                if "env" in profiling_config:
+                    for k, v in profiling_config["env"].items():
+                        env[k] = str(v)
+
             # Apply env overrides
             if "env" in node:
                 for k, v in node["env"].items():
@@ -234,11 +249,23 @@ def run_experiment(
         for p, f in processes:
             try:
                 os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-                p.wait(timeout=5)
+                # Increased timeout to allow Scalene to generate reports
+                p.wait(timeout=15)
             except Exception:
                 with contextlib.suppress(Exception):
                     os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             f.close()
+
+        # Copy Scalene reports if they exist
+        scalene_src_dir = REPO_ROOT / "artifacts" / "scalene" / full_run_id
+        if scalene_src_dir.exists():
+            print(f"Copying Scalene reports from {scalene_src_dir}...")
+            scalene_dest_dir = output_dir / "scalene"
+            scalene_dest_dir.mkdir(exist_ok=True)
+            for item in scalene_src_dir.iterdir():
+                if item.is_file():
+                    shutil.copy(item, scalene_dest_dir / item.name)
+            print(f"Scalene reports copied to {scalene_dest_dir}")
 
 
 if __name__ == "__main__":

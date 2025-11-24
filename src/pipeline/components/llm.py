@@ -6,9 +6,11 @@ Manages Qwen/Qwen2.5-0.5B-Instruct for response generation.
 
 from __future__ import annotations
 
+import builtins
+from collections.abc import Callable
 import logging
 import time
-from typing import TYPE_CHECKING, cast
+from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import torch
 import torch.nn as nn
@@ -22,6 +24,16 @@ if TYPE_CHECKING:
 
 
 logger = logging.getLogger(__name__)
+
+
+T = TypeVar("T", bound=Callable[..., Any])
+
+
+def _noop_profile(func: T) -> T:
+    return func
+
+
+profile = getattr(builtins, "profile", _noop_profile)
 
 
 class LLMGenerator:
@@ -209,6 +221,7 @@ class LLMGenerator:
 
         return messages
 
+    @profile
     def generate(
         self,
         query: str,

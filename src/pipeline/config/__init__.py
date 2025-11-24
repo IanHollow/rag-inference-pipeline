@@ -149,6 +149,12 @@ class PipelineSettings(BaseSettings):
         description="Capacity of the document store cache",
     )
 
+    faiss_use_mmap: bool = Field(
+        default=False,
+        alias="FAISS_USE_MMAP",
+        description="If true, memory-map FAISS index instead of loading fully into RAM",
+    )
+
     fuzzy_cache_matching: bool = Field(
         default=False,
         alias="FUZZY_CACHE_MATCHING",
