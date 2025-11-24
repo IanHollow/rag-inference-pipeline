@@ -61,6 +61,7 @@ class TestDocumentStoreCache(unittest.TestCase):
         # Mock db path
         with (
             patch("pathlib.Path.exists", return_value=True),
+            patch("pathlib.Path.stat", return_value=MagicMock(st_size=1024)),
             patch("diskcache.Cache"),  # Mock diskcache if it was still used, but we replaced it
             patch("sqlite3.connect"),  # We need to mock sqlite3 connection to avoid DB errors
         ):
