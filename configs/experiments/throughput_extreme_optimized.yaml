@@ -1,0 +1,31 @@
+---
+run_id: throughput_extreme_optimized
+description: >
+  Combined optimization with higher batch size to push throughput.
+  Node 0: Gateway + Embedder
+  Node 1: FAISS + Docs + Reranker
+  Node 2: LLM + Sentiment + Toxicity
+
+nodes:
+  - number: 0
+    profile: configs/gateway_with_embedding.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 12
+      GATEWAY_BATCH_TIMEOUT_MS: 150
+  - number: 1
+    profile: configs/retrieval_rerank_no_embedding.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 12
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 12
+
+workload:
+  requests: 100
+  concurrency: 8
+  rate_limit: 0.05
+  timeout: 300
+
+notes: |-
+  Pushing batch size to 12 with balanced load.

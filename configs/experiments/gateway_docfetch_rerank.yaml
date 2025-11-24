@@ -1,0 +1,33 @@
+---
+run_id: gateway_docfetch_rerank
+description: >
+  Gateway takes over doc fetch + rerank + post-processing while Node 1 returns
+  only FAISS IDs and Node 2 is a pure LLM worker. Designed to test whether
+  trimming RPC payloads and freeing Node 2 CPU increases peak throughput.
+
+nodes:
+  - number: 0
+    profile: configs/gateway_docfetch_rerank_postproc.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 5
+      GATEWAY_BATCH_TIMEOUT_MS: 120
+  - number: 1
+    profile: configs/retrieval_embedder_faiss_ids.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 10
+  - number: 2
+    profile: configs/generation_llm_only.yaml
+    env:
+      GENERATION_BATCH_SIZE: 6
+
+workload:
+  requests: 150
+  concurrency: 3
+  rate_limit: 0.08
+  timeout: 300
+
+notes: |-
+  Variant of node2_fetch_rerank with doc store + reranker relocated to the
+  gateway.
+  Focus on verifying whether lighter responses from Node 1 and a lean Node 2
+  unlock higher req/min before timeouts.

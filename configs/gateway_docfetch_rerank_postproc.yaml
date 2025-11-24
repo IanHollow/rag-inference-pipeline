@@ -1,0 +1,22 @@
+---
+name: gateway_docfetch_rerank_postproc
+description: Gateway node hosting DocStore, Reranker, Sentiment, and Toxicity
+
+components:
+  - name: orchestrator
+    type: gateway
+    config:
+      retrieval_url: http://localhost:8001
+      generation_url: http://localhost:8002
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+  - name: sentiment_analyzer
+    type: sentiment
+  - name: toxicity_filter
+    type: toxicity
+
+routes:
+  - prefix: /
+    target: gateway

@@ -1,0 +1,20 @@
+---
+name: generation_fetch_rerank_full
+description: |-
+  Generation node with DocStore, Reranker, LLM, Sentiment, and Toxicity
+
+components:
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+  - name: llm_generator
+    type: llm
+  - name: sentiment_analyzer
+    type: sentiment
+  - name: toxicity_filter
+    type: toxicity
+
+routes:
+  - prefix: /generate
+    target: generation

@@ -1,0 +1,31 @@
+---
+run_id: gateway_embedder_postproc_hub
+description: >
+  Gateway hosts embeddings while Node 1 handles FAISS + post-processing so
+  Node 2 is purely LLM. Tests whether combining the two best-performing
+  optimizations increases throughput beyond the current peak.
+
+nodes:
+  - number: 0
+    profile: configs/gateway_with_embedding.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 4
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retrieval_postproc_no_embedding.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 6
+  - number: 2
+    profile: configs/generation_llm_only.yaml
+    env:
+      GENERATION_BATCH_SIZE: 6
+
+workload:
+  requests: 120
+  concurrency: 4
+  rate_limit: 0.1
+  timeout: 300
+
+notes: |-
+  Gateway Embedder + Retrieval/Postproc hub.
+  Expect Node 2 (LLM) to stay saturated while Node 1 absorbs sentiment/toxicity.

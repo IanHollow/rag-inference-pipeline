@@ -1,0 +1,11 @@
+---
+name: retrieval_faiss_only
+description: Retrieval node with FAISS only (expects embeddings from upstream)
+
+components:
+  - name: faiss_store
+    type: faiss
+
+routes:
+  - prefix: /retrieve
+    target: retrieval

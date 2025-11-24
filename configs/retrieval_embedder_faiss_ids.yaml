@@ -1,0 +1,14 @@
+---
+name: retrieval_embedder_faiss_ids
+description: |-
+  Retrieval Node with Embedder and FAISS (returns IDs only, no DocStore)
+
+components:
+  - name: embedding_generator
+    type: embedding
+  - name: faiss_store
+    type: faiss
+
+routes:
+  - prefix: /retrieve
+    target: retrieval

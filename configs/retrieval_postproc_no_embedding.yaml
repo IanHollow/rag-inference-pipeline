@@ -1,0 +1,21 @@
+---
+name: retrieval_postproc_no_embedding
+description: >
+  Retrieval node with FAISS, DocStore, Reranker, Sentiment, and Toxicity (no
+  embedder)
+
+components:
+  - name: faiss_store
+    type: faiss
+  - name: document_store
+    type: document_store
+  - name: reranker
+    type: reranker
+  - name: sentiment_analyzer
+    type: sentiment
+  - name: toxicity_filter
+    type: toxicity
+
+routes:
+  - prefix: /retrieve
+    target: retrieval

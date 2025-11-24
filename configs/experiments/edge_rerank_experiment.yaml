@@ -1,0 +1,30 @@
+---
+run_id: edge_rerank_experiment
+description: >
+  Gateway handles Embedding + Reranking.
+  Node 1 handles Retrieval only.
+  Node 2 handles Generation (LLM + Sentiment + Toxicity).
+
+nodes:
+  - number: 0
+    profile: configs/gateway_fat.yaml
+    env:
+      GATEWAY_BATCH_SIZE: 6
+      GATEWAY_BATCH_TIMEOUT_MS: 100
+  - number: 1
+    profile: configs/retrieval_only.yaml
+    env:
+      RETRIEVAL_BATCH_SIZE: 12
+  - number: 2
+    profile: configs/generation_no_rerank.yaml
+    env:
+      GENERATION_BATCH_SIZE: 4
+
+workload:
+  requests: 100
+  concurrency: 2
+  rate_limit: 0.1
+  timeout: 300
+
+notes: |-
+  Testing hypothesis: Edge Reranking reduces RPCs and payload size.

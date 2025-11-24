@@ -41,11 +41,11 @@ class GenerationResponseItem(BaseModel):
 
     request_id: str = Field(..., description="Unique request identifier")
     generated_response: str = Field(..., description="Generated LLM response")
-    sentiment: str = Field(
-        ...,
+    sentiment: str | None = Field(
+        None,
         description="Sentiment analysis result: 'very negative', 'negative', 'neutral', 'positive', or 'very positive'",
     )
-    is_toxic: str = Field(..., description="Toxicity flag: 'true' or 'false'")
+    is_toxic: str | None = Field(None, description="Toxicity flag: 'true' or 'false'")
 
 
 class GenerationResponse(BaseModel):

@@ -162,7 +162,9 @@ async def retrieve(
     request: Request,
     retrieval_request: RetrievalRequest,
     faiss_store: Annotated[FAISSStore, Depends(get_component("faiss_store"))],
-    document_store: Annotated[DocumentStore, Depends(get_component("document_store"))],
+    document_store: Annotated[
+        DocumentStore | None, Depends(get_component("document_store"))
+    ] = None,
     embedding_generator: Annotated[
         EmbeddingGenerator | None, Depends(get_component("embedding_generator"))
     ] = None,
@@ -186,13 +188,6 @@ async def retrieve(
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail="FAISS index not loaded",
-        )
-
-    if document_store is None:
-        _record_pipeline_error("document_store_missing")
-        raise HTTPException(
-            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
-            detail="Document store not initialized",
         )
 
     # Validate request
@@ -292,13 +287,31 @@ async def retrieve(
             logger.debug("Fetching documents from database")
             doc_fetch_start = time.time()
             doc_ids_batch = [row.tolist() for row in indices]
-            with (
-                tracer.start_as_current_span("retrieval.document_fetch"),
-                profiler.track("retrieval.document_fetch"),
-            ):
-                documents_batch = document_store.fetch_documents_batch(
-                    doc_ids_batch, truncate_length=settings.truncate_length
-                )
+
+            if document_store:
+                with (
+                    tracer.start_as_current_span("retrieval.document_fetch"),
+                    profiler.track("retrieval.document_fetch"),
+                ):
+                    documents_batch = document_store.fetch_documents_batch(
+                        doc_ids_batch, truncate_length=settings.truncate_length
+                    )
+            else:
+                # Create dummy documents with IDs only
+                documents_batch = []
+                for doc_ids in doc_ids_batch:
+                    docs = []
+                    for doc_id in doc_ids:
+                        # Create Document objects with empty content/title
+                        # Note: DocumentStore.Document is used here, which is what fetch_documents_batch returns
+                        # We need to import Document from components.document_store if not already imported?
+                        # Wait, fetch_documents_batch returns list[list[Document]] where Document is from components.document_store
+                        # Let's check imports in api.py
+                        from ...components.document_store import Document as StoreDocument
+
+                        docs.append(StoreDocument(doc_id=doc_id, title="", content=""))
+                    documents_batch.append(docs)
+
             doc_fetch_elapsed = time.time() - doc_fetch_start
             document_fetch_duration.observe(doc_fetch_elapsed)
             stage_duration_gauge.labels(
