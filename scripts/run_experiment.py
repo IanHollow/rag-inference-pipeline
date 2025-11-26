@@ -129,6 +129,11 @@ def run_experiment(
             env["ROLE_PROFILE_OVERRIDE_PATH"] = str(abs_profile_path)
             env["PROFILING_RUN_ID"] = full_run_id
 
+            # Disable Prometheus/OTLP profiling when monitoring is skipped
+            if skip_monitoring:
+                env["ENABLE_PROFILING"] = "0"
+                env["ENABLE_TRACING"] = "0"
+
             # Check for profiling configuration in manifest
             profiling_config = manifest.get("profiling", {})
             if profiling_config.get("enabled", False) or manifest.get(
