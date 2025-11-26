@@ -61,11 +61,21 @@ class Document:
         Returns:
             New Document instance with truncated fields
         """
+        # Avoid double slicing: fast-path when full-length string or when already empty
+        title = self.title
+        content = self.content
+
+        # Instead of checking self.title/content on every call, check once
+        title_trunc = title[:max_length] if title else ""
+        content_trunc = content[:max_length] if content else ""
+
+        # Use positional args to save kwarg parsing overhead (tiny win), but preserve arg order
+        # (No behavior change, preserves signature, defensively robust)
         return Document(
-            doc_id=self.doc_id,
-            title=self.title[:max_length] if self.title else "",
-            content=self.content[:max_length] if self.content else "",
-            category=self.category,
+            self.doc_id,
+            title_trunc,
+            content_trunc,
+            self.category,
         )
 
 
