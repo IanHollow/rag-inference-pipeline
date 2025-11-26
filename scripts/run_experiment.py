@@ -133,6 +133,12 @@ def run_experiment(
             if skip_monitoring:
                 env["ENABLE_PROFILING"] = "0"
                 env["ENABLE_TRACING"] = "0"
+            # Set NODE_*_IP for all nodes so they can communicate
+            # Default to localhost with port 8000 + node_number for local testing
+            for i in range(total_nodes):
+                ip_key = f"NODE_{i}_IP"
+                if ip_key not in env:
+                    env[ip_key] = f"localhost:{8000 + i}"
 
             # Check for profiling configuration in manifest
             profiling_config = manifest.get("profiling", {})

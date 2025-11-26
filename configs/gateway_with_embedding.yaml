@@ -5,9 +5,7 @@ description: Gateway Node with Embedding
 components:
   - name: orchestrator
     type: gateway
-    config:
-      retrieval_url: http://localhost:8001
-      generation_url: http://localhost:8002
+    # URLs are derived from NODE_1_IP and NODE_2_IP environment variables
   - name: embedding_generator
     type: embedding
 
