@@ -5,6 +5,7 @@ Orchestrates the ML pipeline.
 """
 
 import logging
+import threading
 import time
 from typing import Annotated, Any
 
@@ -34,6 +35,29 @@ from .metrics import (
 from .orchestrator import Orchestrator
 from .rpc_client import RPCError, RPCTimeoutError
 from .schemas import QueryRequest, QueryResponse
+
+
+class _MetricsCache:
+    def __init__(self):
+        self.content = None
+        self.time = 0.0
+        self.lock = threading.Lock()
+        self.ttl = 0.5
+
+    def get_content(self):
+        now = time.monotonic()
+        if self.content is not None and now - self.time < self.ttl:
+            return self.content
+        with self.lock:
+            if self.content is not None and now - self.time < self.ttl:
+                return self.content
+            content = generate_latest()
+            self.content = content
+            self.time = now
+            return content
+
+
+_cache = _MetricsCache()
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -212,6 +236,6 @@ async def clear_cache(
 async def metrics() -> Response:
     """Prometheus metrics endpoint."""
     return Response(
-        content=generate_latest(),
+        content=_cache.get_content(),
         media_type="text/plain; version=0.0.4; charset=utf-8",
     )
