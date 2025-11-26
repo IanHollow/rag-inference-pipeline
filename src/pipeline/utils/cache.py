@@ -38,22 +38,33 @@ class LRUCache(Generic[K, V]):
             "cache_name": name,
         }
 
+        # Cache metrics.labels objects for hot paths (optimization: attribute lookup/offload mapping/dict construction)
+        self._metric_cache_hits = metrics.cache_hits_total.labels(**self.metric_labels)
+        self._metric_cache_misses = metrics.cache_misses_total.labels(**self.metric_labels)
+
     def get(self, key: K) -> V | None:
-        if key not in self.cache:
+        cache = self.cache
+        # Fast path: key exists
+        try:
+            value, timestamp = cache[key]
+        except KeyError:
             self.misses += 1
-            metrics.cache_misses_total.labels(**self.metric_labels).inc()
+            self._metric_cache_misses.inc()
             return None
 
-        value, timestamp = self.cache[key]
-        if self.ttl and (time.time() - timestamp > self.ttl):
-            del self.cache[key]
-            self.misses += 1
-            metrics.cache_misses_total.labels(**self.metric_labels).inc()
-            return None
+        # TTL check (slow path)
+        ttl = self.ttl
+        if ttl is not None:
+            now = time.time()
+            if now - timestamp > ttl:
+                del cache[key]
+                self.misses += 1
+                self._metric_cache_misses.inc()
+                return None
 
-        self.cache.move_to_end(key)
+        cache.move_to_end(key)
         self.hits += 1
-        metrics.cache_hits_total.labels(**self.metric_labels).inc()
+        self._metric_cache_hits.inc()
         return value
 
     def put(self, key: K, value: V) -> None:
