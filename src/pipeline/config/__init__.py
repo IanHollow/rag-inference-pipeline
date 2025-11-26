@@ -312,13 +312,13 @@ class PipelineSettings(BaseSettings):
     )
 
     enable_tracing: bool = Field(
-        default=True,
+        default=False,
         alias="ENABLE_TRACING",
         description="If true, emit OpenTelemetry spans for pipeline stages",
     )
 
     enable_profiling: bool = Field(
-        default=True,
+        default=False,
         alias="ENABLE_PROFILING",
         description="If true, capture sampled psutil-based profiling snapshots",
     )
