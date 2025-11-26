@@ -75,40 +75,63 @@ sleep 1
 echo ""
 echo "Waiting for all nodes to become healthy..."
 
-# Health check function
+# Health check function - returns "healthy" or error status
 check_health() {
 	local port=$1
-	if curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/health" | grep -q "200"; then
-		return 0
+	local response
+	response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/health" 2>/dev/null) || response="000"
+	if [ "$response" = "200" ]; then
+		echo "healthy"
+	elif [ "$response" = "000" ] || [ -z "$response" ]; then
+		echo "not reachable"
 	else
-		return 1
+		echo "HTTP $response"
 	fi
 }
 
-# Wait for services to be ready
-MAX_RETRIES=60
+# Wait for services to be ready (no timeout - waits indefinitely)
 count=0
-nodes_ready=0
 
-while [ $count -lt $MAX_RETRIES ]; do
+while true; do
 	nodes_ready=0
 
+	# Clear line and move cursor up to overwrite previous status
+	if [ $count -gt 0 ]; then
+		# Move cursor up 4 lines to overwrite previous status block
+		echo -ne "\033[4A\033[K"
+	fi
+
+	echo "Health Status (attempt $((count + 1))):"
+
 	# Check Gateway
-	if check_health 8000; then
-		((nodes_ready += 1))
+	gateway_status=$(check_health 8000)
+	if [ "$gateway_status" = "healthy" ]; then
+		nodes_ready=$((nodes_ready + 1))
+		echo -e "  Node 0 (Gateway)    :8000 - ✓ healthy\033[K"
+	else
+		echo -e "  Node 0 (Gateway)    :8000 - ✗ $gateway_status\033[K"
 	fi
 
 	# Check Retrieval
-	if check_health 8001; then
-		((nodes_ready += 1))
+	retrieval_status=$(check_health 8001)
+	if [ "$retrieval_status" = "healthy" ]; then
+		nodes_ready=$((nodes_ready + 1))
+		echo -e "  Node 1 (Retrieval)  :8001 - ✓ healthy\033[K"
+	else
+		echo -e "  Node 1 (Retrieval)  :8001 - ✗ $retrieval_status\033[K"
 	fi
 
 	# Check Generation
-	if check_health 8002; then
-		((nodes_ready += 1))
+	generation_status=$(check_health 8002)
+	if [ "$generation_status" = "healthy" ]; then
+		nodes_ready=$((nodes_ready + 1))
+		echo -e "  Node 2 (Generation) :8002 - ✓ healthy\033[K"
+	else
+		echo -e "  Node 2 (Generation) :8002 - ✗ $generation_status\033[K"
 	fi
 
 	if [ $nodes_ready -eq 3 ]; then
+		echo ""
 		echo "All nodes are healthy and ready to accept requests!"
 		echo "Monitor logs with: tail -f logs/*.log"
 		echo "Press Ctrl+C to stop all nodes"
@@ -117,13 +140,6 @@ while [ $count -lt $MAX_RETRIES ]; do
 		exit 0
 	fi
 
-	sleep 1
-	((count += 1))
-	echo -ne "Waiting for nodes... ($count/$MAX_RETRIES)\r"
+	sleep 2
+	count=$((count + 1))
 done
-
-echo ""
-echo "Error: Timeout waiting for nodes to become healthy."
-echo "Check logs for details:"
-echo "  tail -n 20 logs/*.log"
-exit 1
