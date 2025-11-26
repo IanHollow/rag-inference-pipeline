@@ -79,7 +79,7 @@ echo "Waiting for all nodes to become healthy..."
 check_health() {
 	local port=$1
 	local response
-	response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/health" 2>/dev/null) || response="000"
+	response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/health" 2> /dev/null) || response="000"
 	if [ "$response" = "200" ]; then
 		echo "healthy"
 	elif [ "$response" = "000" ] || [ -z "$response" ]; then
