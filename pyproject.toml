@@ -164,6 +164,7 @@ addopts = [
   "--strict-config",
   "--cov",
   "--cov-report=xml",
+  "--cov-report=html",
   "--cov-report=term-missing",
   "--junitxml=junit.xml",
   "-v",
@@ -207,6 +208,11 @@ parallel = true
 skip_covered = true
 show_missing = true
 exclude_lines = ["pragma: no cover", "if __name__ == .__main__.:"]
+
+[tool.coverage.html]
+directory = "htmlcov"
+show_contexts = true
+title = "CS5416 ML Pipeline Coverage Report"
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/pipeline"]
