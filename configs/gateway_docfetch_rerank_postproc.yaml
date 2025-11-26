@@ -5,9 +5,7 @@ description: Gateway node hosting DocStore, Reranker, Sentiment, and Toxicity
 components:
   - name: orchestrator
     type: gateway
-    config:
-      retrieval_url: http://localhost:8001
-      generation_url: http://localhost:8002
+    # URLs are derived from NODE_1_IP and NODE_2_IP environment variables
   - name: document_store
     type: document_store
   - name: reranker

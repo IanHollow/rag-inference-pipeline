@@ -32,8 +32,18 @@ class ToxicityFilter:
             settings: Pipeline configuration settings
         """
         self.settings = settings
-        self.model_name = "unitary/toxic-bert"
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.model_name = settings.safety_model_name
+
+        if settings.only_cpu:
+            device_name = "cpu"
+        elif torch.cuda.is_available():
+            device_name = "cuda"
+        elif torch.backends.mps.is_available():
+            device_name = "mps"
+        else:
+            device_name = "cpu"
+
+        self.device = torch.device(device_name)
         self.pipeline: TextClassificationPipeline | None = None
         self._loaded = False
         self.threshold = 0.5  # Toxicity threshold
@@ -50,10 +60,18 @@ class ToxicityFilter:
         start_time = time.time()
 
         try:
+            # HuggingFace pipeline device: 0 for cuda, "mps" for Apple Silicon, -1 for CPU
+            if self.device.type == "cuda":
+                device_arg: int | str = 0
+            elif self.device.type == "mps":
+                device_arg = "mps"
+            else:
+                device_arg = -1
+
             self.pipeline = hf_pipeline(
                 "text-classification",
                 model=self.model_name,
-                device=0 if self.device.type == "cuda" else -1,
+                device=device_arg,
             )
 
             self._loaded = True
@@ -81,8 +99,10 @@ class ToxicityFilter:
             del self.pipeline
             self.pipeline = None
 
-        if torch.cuda.is_available():
+        if self.device.type == "cuda":
             torch.cuda.empty_cache()
+        elif self.device.type == "mps":
+            torch.mps.empty_cache()
 
         self._loaded = False
         logger.info("Toxicity model unloaded")

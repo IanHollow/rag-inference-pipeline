@@ -36,7 +36,7 @@ class Reranker:
             settings: Pipeline configuration settings
         """
         self.settings = settings
-        self.model_name = "BAAI/bge-reranker-base"
+        self.model_name = settings.reranker_model_name
 
         if settings.only_cpu:
             device_name = "cpu"
@@ -113,8 +113,10 @@ class Reranker:
             del self.tokenizer
             self.tokenizer = None
 
-        if torch.cuda.is_available():
+        if self.device.type == "cuda":
             torch.cuda.empty_cache()
+        elif self.device.type == "mps":
+            torch.mps.empty_cache()
 
         self._loaded = False
         logger.info("Reranker model unloaded")

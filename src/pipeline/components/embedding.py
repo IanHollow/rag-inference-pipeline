@@ -183,8 +183,10 @@ class EmbeddingGenerator:
             import gc
 
             gc.collect()
-            if not self.settings.only_cpu:
+            if self.device.type == "cuda":
                 torch.cuda.empty_cache()
+            elif self.device.type == "mps":
+                torch.mps.empty_cache()
 
     @property
     def is_loaded(self) -> bool:
