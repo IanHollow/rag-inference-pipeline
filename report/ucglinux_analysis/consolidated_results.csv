@@ -1,0 +1,64 @@
+run_id,full_run_id,notes,batch_size,throughput,latency_p50,latency_p95,success_rate,total_rss_mb
+baseline_reference,baseline_reference_20251125_134410,"Serves as the baseline for comparing all other experiments. Use this run to
+capture per-node RSS, latency distribution, and stage durations for reference.",4.0,10.58,5558.94,10155.63,100.0,0.0
+asymmetric_id_retrieval,asymmetric_id_retrieval_20251125_140505,"Builds on rerank_upstream and gateway_postproc experiment data.
+Goal: exploit lighter Node 1 responses (IDs only) to increase FAISS batching
+while keeping the gateway's post-processing pipeline busy.",6.0,11.29,10695.07,17425.27,100.0,0.0
+baseline_reference,baseline_reference_20251125_142353,"Serves as the baseline for comparing all other experiments. Use this run to
+capture per-node RSS, latency distribution, and stage durations for reference.",4.0,10.26,5697.64,10050.16,100.0,0.0
+batch_sweep_ht_8x4,batch_sweep_ht_8x4_20251125_143320,"Compare directly with batch_sweep_ll_2x2 to illustrate how batching knobs
+impact throughput, latency, and memory. Capture p95 latency and per-node RSS
+for both runs.",8.0,9.59,5593.08,10548.12,100.0,0.0
+batch_sweep_ll_2x2,batch_sweep_ll_2x2_20251125_144945,"Use alongside the high-throughput sweep to produce a latency/throughput curve
+for the report.",2.0,8.54,5981.01,14495.36,100.0,0.0
+combined_optimization,combined_optimization_20251125_145825,"Optimized configuration moving Embedder to Node 0 and Reranker to Node 1.
+This balances the load across all three nodes.",8.0,11.63,20295.71,29978.1,100.0,0.0
+concurrency_stress,concurrency_stress_20251125_150940,"Use this run to capture p95/p99 latency under load and to ensure the system
+remains stable. Include per-node CPU/RSS measurements and check for batching
+backlog at the gateway.",6.0,11.85,18820.61,29992.07,100.0,0.0
+edge_rerank_experiment,edge_rerank_experiment_20251125_153850,Testing hypothesis: Edge Reranking reduces RPCs and payload size.,6.0,10.48,10866.83,18744.29,100.0,0.0
+gateway_docfetch_rerank_tuned,gateway_docfetch_rerank_tuned_20251125_155143,"Builds on the earlier docfetch experiment that hit ~42 req/min but with lower
+tail latency. These settings probe whether the topology still holds up with
+heavier batching at the gateway and FAISS nodes.",6.0,13.29,12235.93,20717.75,99.44,0.0
+gateway_docfetch_rerank,gateway_docfetch_rerank_20251125_160856,"Variant of node2_fetch_rerank with doc store + reranker relocated to the
+gateway.
+Focus on verifying whether lighter responses from Node 1 and a lean Node 2
+unlock higher req/min before timeouts.",5.0,13.72,12197.43,17750.23,99.33,0.0
+gateway_embedder_docfetch,gateway_embedder_docfetch_20251125_162322,"Expect smaller payloads toward Node 1 and a lean Node 2. Compare throughput
+and p95 latency directly against gateway_embedder and gateway_docfetch runs.",6.0,12.87,13286.1,20725.96,100.0,0.0
+gateway_embedder_optimized,gateway_embedder_optimized_20251125_163856,"Same as gateway_embedder but removes unused Embedder from Node 1 to save
+memory.",8.0,10.66,21480.14,36404.85,100.0,0.0
+gateway_embedder_postproc_hub,gateway_embedder_postproc_hub_20251125_165205,"Gateway Embedder + Retrieval/Postproc hub.
+Expect Node 2 (LLM) to stay saturated while Node 1 absorbs sentiment/toxicity.",4.0,12.19,18411.48,28782.02,100.0,0.0
+gateway_embedder,gateway_embedder_20251125_170650,Gateway hosts embedder; retrieval handles FAISS only.,8.0,8.98,5900.26,12731.7,100.0,0.0
+gateway_embedding,gateway_embedding_20251125_171702,"Compare end-to-end latency and Node 1 memory versus the baseline. Expect
+smaller payloads sent to Node 1 and faster gateway->retrieval RPC timings.",4.0,10.03,5797.39,10339.27,100.0,0.0
+gateway_postproc_experiment,gateway_postproc_experiment_20251125_172646,Testing hypothesis: Stripping non-LLM tasks from Node 2 extends throughput.,6.0,9.77,12041.01,21613.39,100.0,0.0
+generation_high_batch,generation_high_batch_20251125_174123,"Intended to push maximum throughput with only 3 nodes. Compare results to
+previous retrieval_with_rerank runs to verify whether co-locating the
+embedder with the gateway plus higher generation batching improves req/min
+without hurting success rate.",8.0,10.82,5564.4,9995.85,100.0,0.0
+long_duration_reliability,long_duration_reliability_20251125_180012,"Capture success rate, memory growth, and average CPU utilization across the
+long run. Use the resulting artifacts to demonstrate operational stability.",4.0,10.36,5607.7,10281.83,100.0,0.0
+node1_postproc_hub,node1_postproc_hub_20251125_190758,"Testing if moving Sentiment/Toxicity to Node 1 further improves throughput
+by freeing up Node 2 resources for the LLM.",4.0,12.54,18062.94,28708.92,100.0,0.0
+node2_fetch_rerank,node2_fetch_rerank_20251125_191946,"Testing if offloading Doc Fetch and Rerank to Node 2 helps balance memory
+usage and reduces network traffic (Doc IDs vs Full Docs).",4.0,12.8,17071.67,28892.25,100.0,0.0
+optimized_batch_4,optimized_batch_4_20251125_193354,"Optimized configuration moving Embedder to Node 0 and Reranker to Node 1.
+Using Batch Size 4 to compare with retrieval_with_rerank.",4.0,12.25,17292.89,32561.69,100.0,0.0
+rerank_upstream,rerank_upstream_20251125_194759,Reranker moved to Retrieval node.,32.0,8.19,6083.44,15509.5,100.0,0.0
+retrieval_rerank_balanced,retrieval_rerank_balanced_20251125_195916,"Closely related to the current top performer but with a balanced batch bump.
+Run at least twice to smooth the +/-4 req/min variance in throughput.",4.0,8.89,5784.16,12747.13,100.0,0.0
+retrieval_rerank_batch_2,retrieval_rerank_batch_2_20251125_201450,"Testing if lower batch size improves throughput for the best performing
+config.",2.0,10.32,5398.57,10193.42,100.0,0.0
+retrieval_with_rerank,retrieval_with_rerank_20251125_202517,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",4.0,9.47,5016.44,10251.3,100.0,0.0
+stress_retrieval_long,stress_retrieval_long_20251125_203734,"Monitor FAISS search duration, Node 1 RSS, and RPC latency back to the
+gateway. Useful for determining whether FAISS becomes the new bottleneck when
+embeddings move upstream.",6.0,10.34,5538.88,10051.1,100.0,0.0
+throughput_extreme_optimized,throughput_extreme_optimized_20251125_205954,Pushing batch size to 12 with balanced load.,12.0,11.1,43791.91,65816.91,100.0,0.0
+throughput_extreme,throughput_extreme_20251125_211401,"Expect higher latency but potentially the highest throughput. Use this run to
+determine the practical maximum req/min before timeouts or memory constraints
+appear.",10.0,9.52,11930.7,25539.78,100.0,0.0
+max_throughput_test,max_throughput_test_20251125_213946,High concurrency test to saturate the pipeline and measure max throughput.,32.0,8.26,272346.61,296961.94,62.0,0.0
