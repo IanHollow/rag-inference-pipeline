@@ -38,22 +38,32 @@ class LRUCache(Generic[K, V]):
             "cache_name": name,
         }
 
+        # These two lines cache frequently used methods and label dict to local variables (perf: micro/good for tight loops)
+        self._misses_metric = metrics.cache_misses_total.labels(**self.metric_labels)
+        self._hits_metric = metrics.cache_hits_total.labels(**self.metric_labels)
+
     def get(self, key: K) -> V | None:
-        if key not in self.cache:
+        # Micro-optimization: pull frequently used locals
+        cache = self.cache
+        ttl = self.ttl
+        misses_metric = self._misses_metric
+        hits_metric = self._hits_metric
+
+        if key not in cache:
             self.misses += 1
-            metrics.cache_misses_total.labels(**self.metric_labels).inc()
+            misses_metric.inc()
             return None
 
-        value, timestamp = self.cache[key]
-        if self.ttl and (time.time() - timestamp > self.ttl):
-            del self.cache[key]
+        value, timestamp = cache[key]
+        if ttl is not None and (time.time() - timestamp > ttl):
+            del cache[key]
             self.misses += 1
-            metrics.cache_misses_total.labels(**self.metric_labels).inc()
+            misses_metric.inc()
             return None
 
-        self.cache.move_to_end(key)
+        cache.move_to_end(key)
         self.hits += 1
-        metrics.cache_hits_total.labels(**self.metric_labels).inc()
+        hits_metric.inc()
         return value
 
     def put(self, key: K, value: V) -> None:
@@ -87,6 +97,10 @@ class CompressedLRUCache(LRUCache[K, V]):
 
         try:
             serialized = lz4.frame.decompress(compressed)
+        except Exception:
+            return None
+        # orjson.loads returns on Exception for malformed input, no need to further catch unless you want to catch MemoryError
+        try:
             return orjson.loads(serialized)
         except Exception:
             return None
