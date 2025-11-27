@@ -98,6 +98,10 @@ class CompressedLRUCache(LRUCache[K, V]):
 
         try:
             serialized = lz4.frame.decompress(compressed)
+        except Exception:
+            return None
+        # orjson.loads returns on Exception for malformed input, no need to further catch unless you want to catch MemoryError
+        try:
             return orjson.loads(serialized)
         except Exception:
             return None
