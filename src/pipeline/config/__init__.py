@@ -163,7 +163,7 @@ class PipelineSettings(BaseSettings):
 
     # === Compression Configuration ===
     pipeline_rpc_compression: str = Field(
-        default="none",
+        default="lz4",
         alias="PIPELINE_RPC_COMPRESSION",
         description="Compression algorithm for RPC (none, zstd, lz4)",
     )
@@ -176,7 +176,7 @@ class PipelineSettings(BaseSettings):
 
     # === Document Payload Configuration ===
     documents_payload_mode: str = Field(
-        default="full",
+        default="id_only",
         alias="DOCUMENTS_PAYLOAD_MODE",
         description="Mode for document payload transfer: 'full', 'id_only', 'compressed'",
     )

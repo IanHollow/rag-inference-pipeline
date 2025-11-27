@@ -3,6 +3,8 @@ name: generation_llm_only
 description: Generation node with only LLM (no Rerank, Sentiment, Toxicity)
 
 components:
+  - name: document_store
+    type: document_store
   - name: llm_generator
     type: llm
 

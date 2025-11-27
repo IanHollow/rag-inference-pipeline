@@ -1,0 +1,13 @@
+run_id,full_run_id,notes,batch_size,throughput,latency_p50,latency_p95,success_rate,total_rss_mb
+retrieval_with_rerank,retrieval_with_rerank_20251126_233432,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,66.24,1624.97,3285.91,100.0,6.609375
+batch_sweep_ht_8x4,batch_sweep_ht_8x4_20251126_232901,"Compare directly with batch_sweep_ll_2x2 to illustrate how batching knobs
+impact throughput, latency, and memory. Capture p95 latency and per-node RSS
+for both runs.",8.0,53.33,806.37,2482.18,100.0,8.984375
+batch_sweep_ll_2x2,batch_sweep_ll_2x2_20251126_233135,"Use alongside the high-throughput sweep to produce a latency/throughput curve
+for the report.",2.0,48.84,853.32,2458.11,100.0,7.859375
+optimized_batch_4,optimized_batch_4_20251126_233244,"Optimized configuration moving Embedder to Node 0 and Reranker to Node 1.
+Using Batch Size 4 to compare with retrieval_with_rerank.",4.0,73.07,3056.23,6302.13,100.0,5.28125
+baseline_reference,baseline_reference_20251126_232709,"Serves as the baseline for comparing all other experiments. Use this run to
+capture per-node RSS, latency distribution, and stage durations for reference.",4.0,40.82,1025.31,4680.26,100.0,8.875

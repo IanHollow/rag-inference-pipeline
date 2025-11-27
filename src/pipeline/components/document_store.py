@@ -99,6 +99,10 @@ class DocumentStore:
         self._lock = threading.Lock()
         self._memory_db_uri = "file:documents_cache?mode=memory&cache=shared"
         self._shared_memory_conn: sqlite3.Connection | None = None
+        # Avoid expensive in-memory clone on nodes that will not fetch documents
+        self._use_memory_db = not (
+            settings.documents_payload_mode == "id_only" and settings.role.name == "RETRIEVAL"
+        )
 
         # Validate database exists
         if not self.db_path.exists():
@@ -112,7 +116,12 @@ class DocumentStore:
         )
 
         logger.info("Initialized DocumentStore with database at %s", self.db_path)
-        self._initialize_in_memory_database()
+        if self._use_memory_db:
+            self._initialize_in_memory_database()
+        else:
+            logger.info(
+                "Skipping in-memory document clone (payload_mode=id_only on retrieval node)"
+            )
 
     def _get_connection(self) -> sqlite3.Connection:
         """

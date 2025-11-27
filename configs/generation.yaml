@@ -3,6 +3,8 @@ name: generation
 description: Generation node with Reranker, LLM, Sentiment, and Toxicity
 
 components:
+  - name: document_store
+    type: document_store
   - name: reranker
     type: reranker
   - name: llm_generator
