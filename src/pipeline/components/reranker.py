@@ -80,14 +80,6 @@ class Reranker:
             model = model.to(self.device)
             model.eval()
 
-            # Apply torch.compile for faster inference (PyTorch 2.0+)
-            if hasattr(torch, "compile"):
-                try:
-                    model = torch.compile(model, mode="max-autotune", fullgraph=True)
-                    logger.info("Applied torch.compile optimization")
-                except Exception as e:
-                    logger.warning("torch.compile failed, using eager mode: %s", e)
-
             self.model = cast("PreTrainedModel", model)
             self._loaded = True
 
