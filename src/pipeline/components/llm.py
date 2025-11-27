@@ -105,7 +105,16 @@ class LLMGenerator:
 
             cast("nn.Module", model).to(self.device)
             model.eval()
-            self.model = model
+
+            # Apply torch.compile for faster inference (PyTorch 2.0+)
+            try:
+                compiled_model = torch.compile(model, mode="max-autotune", fullgraph=True)
+                self.model = cast("PreTrainedModel", compiled_model)
+                logger.info("Applied torch.compile optimization")
+            except Exception as e:
+                logger.warning("torch.compile failed, using eager mode: %s", e)
+                self.model = model
+
             self._loaded = True
 
             # Warmup
@@ -136,7 +145,7 @@ class LLMGenerator:
                 dummy_attention_mask = dummy_input.get("attention_mask")
 
                 # Get generate method explicitly
-                generate_fn = model.generate
+                generate_fn = cast("PreTrainedModel", self.model.generate)
 
                 with torch.inference_mode():
                     generate_fn(
@@ -264,8 +273,6 @@ class LLMGenerator:
         # Get generate method explicitly to work around transformers type stub issues
         generate_fn = model.generate
 
-        # Use inference_mode for better performance (faster than no_grad)
-        # No autocast needed since model is already loaded in float16 for CUDA/MPS
         with torch.inference_mode():
             generated_ids = generate_fn(  # type: ignore[operator]
                 input_ids=model_inputs["input_ids"],

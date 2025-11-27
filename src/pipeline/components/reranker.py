@@ -70,13 +70,25 @@ class Reranker:
                 AutoTokenizer.from_pretrained(self.model_name),
             )
 
-            # Load model
+            # Load model with appropriate dtype
+            # Use float16 for CUDA and MPS (Apple Silicon), float32 for CPU
+            use_fp16 = self.device.type in ("cuda", "mps")
             model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name,
-                dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+                dtype=torch.float16 if use_fp16 else torch.float32,
             )
-            self.model = cast("PreTrainedModel", model.to(self.device))
-            self.model.eval()
+            model = model.to(self.device)
+            model.eval()
+
+            # Apply torch.compile for faster inference (PyTorch 2.0+)
+            if hasattr(torch, "compile"):
+                try:
+                    model = torch.compile(model, mode="max-autotune", fullgraph=True)
+                    logger.info("Applied torch.compile optimization")
+                except Exception as e:
+                    logger.warning("torch.compile failed, using eager mode: %s", e)
+
+            self.model = cast("PreTrainedModel", model)
             self._loaded = True
 
             # Warmup
@@ -159,25 +171,21 @@ class Reranker:
         # Prepare query-document pairs
         pairs = [[query, doc.content] for doc in documents]
 
-        # Tokenize and score
-        with torch.no_grad():
-            inputs = self.tokenizer(
-                pairs,
-                padding=True,
-                truncation=True,
-                return_tensors="pt",
-                max_length=self.settings.truncate_length,
-            ).to(self.device)
+        # Tokenize
+        inputs = self.tokenizer(
+            pairs,
+            padding=True,
+            truncation=True,
+            return_tensors="pt",
+            max_length=self.settings.truncate_length,
+        ).to(self.device)
 
+        with torch.inference_mode():
             scores = self.model(**inputs, return_dict=True).logits.view(-1).float()
 
-        # Convert to CPU and numpy for sorting
-        scores_np = scores.cpu().numpy()
-
-        # Normalize scores to [0, 1] using sigmoid
-        import numpy as np
-
-        normalized_scores = 1 / (1 + np.exp(-scores_np))
+        # Normalize scores to [0, 1] using sigmoid and convert to numpy
+        # Using torch sigmoid before cpu transfer can be faster on GPU
+        normalized_scores = torch.sigmoid(scores).cpu().numpy()
 
         # Create reranked documents with scores
         scored_docs = [

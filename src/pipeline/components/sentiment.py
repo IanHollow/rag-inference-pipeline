@@ -6,7 +6,7 @@ Manages nlptown/bert-base-multilingual-uncased-sentiment for sentiment classific
 
 import logging
 import time
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar, cast
 
 import torch
 from transformers import TextClassificationPipeline, pipeline as hf_pipeline
@@ -76,12 +76,30 @@ class SentimentAnalyzer:
             else:
                 device_arg = -1
 
+            # Use float16 for CUDA and MPS, float32 for CPU
+            use_fp16 = self.device.type in ("cuda", "mps")
+            torch_dtype = torch.float16 if use_fp16 else torch.float32
+
             pipeline_result = hf_pipeline(
                 task="text-classification",
                 model=self.model_name,
                 device=device_arg,
+                torch_dtype=torch_dtype,
             )
             self.pipeline = pipeline_result
+
+            # Apply torch.compile for faster inference (PyTorch 2.0+)
+            if hasattr(torch, "compile") and self.pipeline is not None:
+                try:
+                    if TYPE_CHECKING:
+                        from transformers.modeling_utils import PreTrainedModel
+                    self.pipeline.model = cast(
+                        "PreTrainedModel",
+                        torch.compile(self.pipeline.model, mode="max-autotune", fullgraph=True),
+                    )
+                    logger.info("Applied torch.compile optimization")
+                except Exception as e:
+                    logger.warning("torch.compile failed, using eager mode: %s", e)
 
             self._loaded = True
 
