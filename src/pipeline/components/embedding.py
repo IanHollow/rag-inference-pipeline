@@ -75,7 +75,7 @@ class EmbeddingGenerator:
 
         logger.info("Loading embedding model: %s", self.model_name)
         try:
-            self._model = SentenceTransformer(self.model_name).to(self.device)
+            self._model = SentenceTransformer(self.model_name, device=str(self.device))
             self._model.eval()
             self._is_loaded = True
 
