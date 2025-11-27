@@ -93,9 +93,11 @@ class LLMGenerator:
             self.tokenizer = tokenizer
 
             # Load model with appropriate dtype
+            # Use float16 for CUDA and MPS (Apple Silicon), float32 for CPU
+            use_fp16 = self.device.type in ("cuda", "mps")
             model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
-                dtype=torch.float16 if self.device.type == "cuda" else torch.float32,
+                dtype=torch.float16 if use_fp16 else torch.float32,
                 # TODO: look into re-enabling these options which require the accelerate python package
                 # low_cpu_mem_usage=True,
                 # device_map=str(self.device),
@@ -127,35 +129,24 @@ class LLMGenerator:
                     tokenize=False,
                     add_generation_prompt=True,
                 )
-                dummy_input = self.tokenizer(warmup_text, return_tensors="pt").to(self.device)
+                dummy_input = self.tokenizer(cast("str", warmup_text), return_tensors="pt").to(
+                    self.device
+                )
+                dummy_input_ids = dummy_input["input_ids"]
+                dummy_attention_mask = dummy_input.get("attention_mask")
 
                 # Get generate method explicitly
                 generate_fn = model.generate
 
-                with torch.no_grad():
-                    if self.device.type == "cuda":
-                        with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                            generate_fn(
-                                **dummy_input,
-                                max_new_tokens=10,  # Generate more tokens to trigger more kernels
-                                temperature=0.01,
-                                pad_token_id=self.tokenizer.eos_token_id,
-                                do_sample=False,
-                            )
-                    else:
-                        generate_fn(
-                            **dummy_input,
-                            max_new_tokens=10,
-                            temperature=0.01,
-                            pad_token_id=self.tokenizer.eos_token_id,
-                            do_sample=False,
-                        )
-
-            # Clear cache after warmup to free up memory
-            if self.device.type == "cuda":
-                torch.cuda.empty_cache()
-            elif self.device.type == "mps":
-                torch.mps.empty_cache()
+                with torch.inference_mode():
+                    generate_fn(
+                        input_ids=dummy_input_ids,
+                        attention_mask=dummy_attention_mask,
+                        max_new_tokens=10,
+                        pad_token_id=self.tokenizer.eos_token_id,
+                        do_sample=False,
+                        use_cache=True,
+                    )
 
             logger.info("LLM warmup complete")
             elapsed = time.time() - start_time
@@ -261,42 +252,35 @@ class LLMGenerator:
         )
 
         # Tokenize
-        tokenizer_output = tokenizer([text], return_tensors="pt")
-        model_inputs = tokenizer_output.to(self.device)
+        model_inputs = tokenizer(
+            cast("str", text),
+            return_tensors="pt",
+            return_attention_mask=True,
+        ).to(self.device)
+
+        # Cache input length before generation
+        input_length = model_inputs.input_ids.shape[1]
 
         # Get generate method explicitly to work around transformers type stub issues
-        # The generate attribute is incorrectly typed in transformers stubs
         generate_fn = model.generate
 
-        # Generate with autocast for memory efficiency
-        with torch.no_grad():
-            if self.device.type == "cuda":
-                with torch.amp.autocast(device_type="cuda", dtype=torch.float16):
-                    generated_ids = generate_fn(  # type: ignore[operator]
-                        input_ids=model_inputs["input_ids"],
-                        attention_mask=model_inputs.get("attention_mask"),
-                        max_new_tokens=self.settings.max_tokens,
-                        temperature=0.01,
-                        pad_token_id=tokenizer.eos_token_id,
-                        do_sample=False,
-                    )
-            else:
-                generated_ids = generate_fn(  # type: ignore[operator]
-                    input_ids=model_inputs["input_ids"],
-                    attention_mask=model_inputs.get("attention_mask"),
-                    max_new_tokens=self.settings.max_tokens,
-                    temperature=0.01,
-                    pad_token_id=tokenizer.eos_token_id,
-                    do_sample=False,
-                )
+        # Use inference_mode for better performance (faster than no_grad)
+        # No autocast needed since model is already loaded in float16 for CUDA/MPS
+        with torch.inference_mode():
+            generated_ids = generate_fn(  # type: ignore[operator]
+                input_ids=model_inputs["input_ids"],
+                attention_mask=model_inputs.get("attention_mask"),
+                max_new_tokens=self.settings.max_tokens,
+                pad_token_id=tokenizer.eos_token_id,
+                do_sample=False,
+                use_cache=True,
+            )
 
-        # Extract only the generated tokens and remove input
-        # generated_ids is a tensor of shape (batch_size, seq_len)
-        input_length = model_inputs.input_ids.shape[1]
-        generated_ids_list = [output_ids[input_length:] for output_ids in generated_ids]
+        # Extract only the generated tokens (slice directly on tensor)
+        generated_tokens = generated_ids[0, input_length:]
 
-        # Decode
-        response = tokenizer.batch_decode(generated_ids_list, skip_special_tokens=True)[0]
+        # Decode single sequence (faster than batch_decode for single item)
+        response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
 
         return response
 
