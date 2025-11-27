@@ -9,6 +9,7 @@ from pathlib import Path
 
 import faiss
 import numpy as np
+import torch
 
 from ..config import PipelineSettings
 
@@ -64,8 +65,8 @@ class FAISSStore:
                 # Default path eagerly loads the entire index into RAM
                 self._index = faiss.read_index(str(self.index_path))
 
-            # Move to GPU if configured
-            if not self.settings.only_cpu:
+            # Move to GPU if CUDA is available (FAISS GPU only supports NVIDIA GPUs)
+            if not self.settings.only_cpu and torch.cuda.is_available():
                 try:
                     logger.info("Moving FAISS index to GPU...")
                     res = faiss.StandardGpuResources()

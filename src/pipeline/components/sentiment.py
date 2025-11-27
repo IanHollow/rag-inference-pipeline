@@ -6,7 +6,7 @@ Manages nlptown/bert-base-multilingual-uncased-sentiment for sentiment classific
 
 import logging
 import time
-from typing import TYPE_CHECKING, ClassVar, cast
+from typing import ClassVar
 
 import torch
 from transformers import TextClassificationPipeline, pipeline as hf_pipeline
@@ -87,19 +87,6 @@ class SentimentAnalyzer:
                 torch_dtype=torch_dtype,
             )
             self.pipeline = pipeline_result
-
-            # Apply torch.compile for faster inference (PyTorch 2.0+)
-            if hasattr(torch, "compile") and self.pipeline is not None:
-                try:
-                    if TYPE_CHECKING:
-                        from transformers.modeling_utils import PreTrainedModel
-                    self.pipeline.model = cast(
-                        "PreTrainedModel",
-                        torch.compile(self.pipeline.model, mode="max-autotune", fullgraph=True),
-                    )
-                    logger.info("Applied torch.compile optimization")
-                except Exception as e:
-                    logger.warning("torch.compile failed, using eager mode: %s", e)
 
             self._loaded = True
 
