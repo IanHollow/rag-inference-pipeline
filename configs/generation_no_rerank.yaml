@@ -3,6 +3,8 @@ name: generation_no_rerank
 description: Generation node without Reranker
 
 components:
+  - name: document_store
+    type: document_store
   - name: llm_generator
     type: llm
   - name: sentiment_analyzer
