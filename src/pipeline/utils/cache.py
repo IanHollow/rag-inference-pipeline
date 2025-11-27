@@ -38,32 +38,33 @@ class LRUCache(Generic[K, V]):
             "cache_name": name,
         }
 
-        # These two lines cache frequently used methods and label dict to local variables (perf: micro/good for tight loops)
-        self._misses_metric = metrics.cache_misses_total.labels(**self.metric_labels)
-        self._hits_metric = metrics.cache_hits_total.labels(**self.metric_labels)
+        # Cache metrics.labels objects for hot paths (optimization: attribute lookup/offload mapping/dict construction)
+        self._metric_cache_hits = metrics.cache_hits_total.labels(**self.metric_labels)
+        self._metric_cache_misses = metrics.cache_misses_total.labels(**self.metric_labels)
 
     def get(self, key: K) -> V | None:
-        # Micro-optimization: pull frequently used locals
         cache = self.cache
+        # Fast path: key exists
+        try:
+            value, timestamp = cache[key]
+        except KeyError:
+            self.misses += 1
+            self._metric_cache_misses.inc()
+            return None
+
+        # TTL check (slow path)
         ttl = self.ttl
-        misses_metric = self._misses_metric
-        hits_metric = self._hits_metric
-
-        if key not in cache:
-            self.misses += 1
-            misses_metric.inc()
-            return None
-
-        value, timestamp = cache[key]
-        if ttl is not None and (time.time() - timestamp > ttl):
-            del cache[key]
-            self.misses += 1
-            misses_metric.inc()
-            return None
+        if ttl is not None:
+            now = time.time()
+            if now - timestamp > ttl:
+                del cache[key]
+                self.misses += 1
+                self._metric_cache_misses.inc()
+                return None
 
         cache.move_to_end(key)
         self.hits += 1
-        hits_metric.inc()
+        self._metric_cache_hits.inc()
         return value
 
     def put(self, key: K, value: V) -> None:
