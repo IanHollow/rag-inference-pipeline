@@ -100,12 +100,6 @@ class PipelineSettings(BaseSettings):
         description="Number of threads for worker pools",
     )
 
-    max_parallel_generation: int = Field(
-        default=4,
-        alias="MAX_PARALLEL_GENERATION",
-        description="Maximum number of concurrent generation requests",
-    )
-
     enable_adaptive_batching: bool = Field(
         default=True,
         alias="ENABLE_ADAPTIVE_BATCHING",
