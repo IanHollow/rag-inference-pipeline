@@ -6,10 +6,13 @@ Manages unitary/toxic-bert for toxicity/safety filtering.
 
 import logging
 import time
+from typing import TYPE_CHECKING, cast
 
 import torch
 from transformers import TextClassificationPipeline, pipeline as hf_pipeline
 
+if TYPE_CHECKING:
+    from transformers.modeling_utils import PreTrainedModel
 from ..config import PipelineSettings
 
 logger = logging.getLogger(__name__)
@@ -68,11 +71,27 @@ class ToxicityFilter:
             else:
                 device_arg = -1
 
+            # Use float16 for CUDA and MPS, float32 for CPU
+            use_fp16 = self.device.type in ("cuda", "mps")
+            torch_dtype = torch.float16 if use_fp16 else torch.float32
+
             self.pipeline = hf_pipeline(
                 "text-classification",
                 model=self.model_name,
                 device=device_arg,
+                torch_dtype=torch_dtype,
             )
+
+            # Apply torch.compile for faster inference (PyTorch 2.0+)
+            if self.pipeline is not None:
+                try:
+                    self.pipeline.model = cast(
+                        "PreTrainedModel",
+                        torch.compile(self.pipeline.model, mode="max-autotune", fullgraph=True),
+                    )
+                    logger.info("Applied torch.compile optimization")
+                except Exception as e:
+                    logger.warning("torch.compile failed, using eager mode: %s", e)
 
             self._loaded = True
 
