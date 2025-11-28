@@ -19,8 +19,8 @@ class RouteConfig(BaseModel):
 class ProfileFile(BaseModel):
     name: str
     description: str = ""
-    batch_size: int = 32
-    batch_timeout: float = 0.1
+    batch_size: int | None = None  # If None, use settings.gateway_batch_size
+    batch_timeout: float | None = None  # If None, use settings.gateway_batch_timeout_ms
     components: list[ComponentConfig] = Field(default_factory=list)
     routes: list[RouteConfig] = Field(default_factory=list)
 

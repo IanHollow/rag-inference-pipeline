@@ -15,7 +15,7 @@ nodes:
 
 workload:
   requests: 80
-  concurrency: 2
+  concurrency: 32
   timeout: 300
 
 notes: |-

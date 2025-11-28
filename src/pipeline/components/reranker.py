@@ -4,6 +4,7 @@ Reranker module for the generation service.
 Loads and manages the BAAI/bge-reranker-base model for document reranking.
 """
 
+import gc
 import logging
 import time
 from typing import TYPE_CHECKING, cast
@@ -18,6 +19,15 @@ from ..config import PipelineSettings
 from .schemas import Document, RerankedDocument
 
 logger = logging.getLogger(__name__)
+
+
+def _clear_memory(device: torch.device) -> None:
+    """Clear GPU/MPS memory caches to prevent fragmentation."""
+    gc.collect()
+    if device.type == "cuda":
+        torch.cuda.empty_cache()
+    elif device.type == "mps":
+        torch.mps.empty_cache()
 
 
 class Reranker:
@@ -70,18 +80,68 @@ class Reranker:
                 AutoTokenizer.from_pretrained(self.model_name),
             )
 
-            # Load model with appropriate dtype
-            # Use float16 for CUDA and MPS (Apple Silicon), float32 for CPU
-            use_fp16 = self.device.type in ("cuda", "mps")
+            # Determine optimal dtype based on device
+            # - CUDA/MPS: float16 for best GPU performance
+            # - CPU with BF16 support: bfloat16 for ~2x speedup on Intel AMX / newer CPUs
+            # - CPU without BF16: float32 (safest fallback)
+            if self.device.type in ("cuda", "mps"):
+                model_dtype = torch.float16
+                dtype_name = "float16"
+            elif (
+                self.device.type == "cpu"
+                and hasattr(torch, "backends")
+                and hasattr(torch.backends, "cpu")
+                and getattr(torch.backends.cpu, "is_bf16_supported", lambda: False)()
+            ):
+                model_dtype = torch.bfloat16
+                dtype_name = "bfloat16"
+            else:
+                model_dtype = torch.float32
+                dtype_name = "float32"
+
+            logger.info("Loading reranker with dtype=%s", dtype_name)
             model = AutoModelForSequenceClassification.from_pretrained(
                 self.model_name,
-                dtype=torch.float16 if use_fp16 else torch.float32,
+                dtype=model_dtype,
+                low_cpu_mem_usage=True,
             )
             model = model.to(self.device)
             model.eval()
 
+            # Apply SDPA (Scaled Dot Product Attention) optimization for PyTorch 2.0+
+            if hasattr(model.config, "attn_implementation"):
+                try:
+                    model.config.attn_implementation = "sdpa"
+                    logger.info("Enabled SDPA (Flash Attention) for reranker")
+                except Exception as e:
+                    logger.debug("SDPA not available for reranker: %s", e)
+
+            # Apply torch.compile for GPU optimization only (PyTorch 2.0+)
+            if (
+                self.settings.enable_torch_compile
+                and hasattr(torch, "compile")
+                and self.device.type == "cuda"
+            ):
+                try:
+                    compile_mode = self.settings.torch_compile_mode
+                    logger.info(
+                        "Applying torch.compile to reranker with mode=%s",
+                        compile_mode,
+                    )
+                    model = torch.compile(
+                        model,
+                        mode=compile_mode,
+                        fullgraph=False,
+                    )
+                    logger.info("torch.compile applied to reranker successfully")
+                except Exception as e:
+                    logger.warning("torch.compile failed for reranker, continuing without: %s", e)
+
             self.model = cast("PreTrainedModel", model)
             self._loaded = True
+
+            # Clear any temporary allocations from loading
+            _clear_memory(self.device)
 
             # Warmup
             logger.info("Warming up reranker...")
@@ -91,8 +151,9 @@ class Reranker:
                 dummy_inputs = self.tokenizer(
                     [dummy_query], [dummy_doc], return_tensors="pt", padding=True, truncation=True
                 ).to(self.device)
-                with torch.no_grad():
+                with torch.inference_mode():
                     self.model(**dummy_inputs)
+                del dummy_inputs
             logger.info("Reranker warmup complete")
 
             elapsed = time.time() - start_time
@@ -116,6 +177,9 @@ class Reranker:
         if self.tokenizer is not None:
             del self.tokenizer
             self.tokenizer = None
+
+        # Force garbage collection before clearing device cache
+        gc.collect()
 
         if self.device.type == "cuda":
             torch.cuda.empty_cache()
@@ -174,10 +238,12 @@ class Reranker:
 
         with torch.inference_mode():
             scores = self.model(**inputs, return_dict=True).logits.view(-1).float()
+            # Normalize scores to [0, 1] using sigmoid and convert to numpy
+            # Using torch sigmoid before cpu transfer can be faster on GPU
+            normalized_scores = torch.sigmoid(scores).cpu().numpy()
 
-        # Normalize scores to [0, 1] using sigmoid and convert to numpy
-        # Using torch sigmoid before cpu transfer can be faster on GPU
-        normalized_scores = torch.sigmoid(scores).cpu().numpy()
+        # Explicit cleanup of intermediate tensors
+        del inputs, scores
 
         # Create reranked documents with scores
         scored_docs = [

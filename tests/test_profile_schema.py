@@ -33,7 +33,7 @@ def test_invalid_route_target() -> None:
 
 def test_defaults() -> None:
     profile = ProfileFile(name="defaults")
-    assert profile.batch_size == 32
-    assert profile.batch_timeout == 0.1
+    assert profile.batch_size is None  # Defaults to None, uses settings.gateway_batch_size
+    assert profile.batch_timeout is None  # Defaults to None, uses settings.gateway_batch_timeout_ms
     assert profile.components == []
     assert profile.routes == []

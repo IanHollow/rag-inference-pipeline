@@ -80,7 +80,7 @@ class TestAdaptiveBatchPolicy:
         assert batch_size <= policy.max_batch_size
 
     def test_update_high_queue_depth(self) -> None:
-        """Test policy update with high queue depth (>10)."""
+        """Test policy update with high queue depth (>= max_batch_size)."""
         policy = AdaptiveBatchPolicy(
             min_batch_size=1,
             max_batch_size=32,
@@ -88,9 +88,9 @@ class TestAdaptiveBatchPolicy:
             max_delay_sec=0.5,
         )
 
-        # Call multiple times to stabilize
+        # Call multiple times to stabilize - use queue_depth >= max_batch_size
         for _ in range(20):
-            batch_size, delay = policy.update(queue_depth=15)
+            batch_size, delay = policy.update(queue_depth=32)
 
         # Should converge toward maximum values (EWMA may not reach exact max)
         assert batch_size >= policy.max_batch_size * 0.9  # Allow 10% tolerance
@@ -222,7 +222,9 @@ class TestBatchSchedulerAdvanced:
         )
 
         assert scheduler.policy is not None
-        assert scheduler.policy.max_batch_size == 16
+        # Adaptive policy uses batch_size as min and 4x as max for scaling under load
+        assert scheduler.policy.min_batch_size == 16
+        assert scheduler.policy.max_batch_size == 64  # 16 * 4
         assert scheduler.policy.max_delay_sec == 0.3
 
     @pytest.mark.asyncio

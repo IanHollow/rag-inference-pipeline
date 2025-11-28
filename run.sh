@@ -5,6 +5,10 @@ set -euo pipefail
 # shellcheck disable=SC1091
 . .venv/bin/activate
 
+# CRITICAL: Set OpenMP threads to 1 to prevent deadlocks.
+export OMP_NUM_THREADS=1
+export MKL_NUM_THREADS=1
+
 # Check if profiling is enabled
 if [[ ${PROFILE_WITH_SCALENE:-0} == "1"   ]]; then
 	# Ensure required environment variables are set

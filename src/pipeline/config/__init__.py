@@ -91,7 +91,13 @@ class PipelineSettings(BaseSettings):
     cpu_inference_threads: int = Field(
         default_factory=_default_cpu_threads,
         alias="CPU_INFERENCE_THREADS",
-        description="Number of threads for CPU inference (torch, faiss)",
+        description="Number of threads for CPU inference (torch)",
+    )
+
+    faiss_threads: int = Field(
+        default_factory=_default_cpu_threads,
+        alias="FAISS_THREADS",
+        description="Number of threads for FAISS search (uses OpenMP internally)",
     )
 
     cpu_worker_threads: int = Field(
@@ -315,6 +321,18 @@ class PipelineSettings(BaseSettings):
         default=False,
         alias="ENABLE_PROFILING",
         description="If true, capture sampled psutil-based profiling snapshots",
+    )
+
+    enable_torch_compile: bool = Field(
+        default=False,
+        alias="ENABLE_TORCH_COMPILE",
+        description="If true, use torch.compile for model optimization (requires PyTorch 2.0+)",
+    )
+
+    torch_compile_mode: str = Field(
+        default="default",  # 'default' is CPU-safe and 'reduce-overhead' uses CUDA graphs (GPU only)
+        alias="TORCH_COMPILE_MODE",
+        description="torch.compile mode: 'default' (CPU-safe), 'reduce-overhead' (GPU), 'max-autotune' (GPU)",
     )
 
     profiling_sample_rate: float = Field(

@@ -164,9 +164,12 @@ def create_app_from_profile(settings: PipelineSettings) -> FastAPI:
         try:
             # Inject profile-level settings into component config if applicable
             # (Mainly for Gateway Orchestrator which needs batch settings)
+            # Only inject if profile explicitly specifies values (not None)
             if component_config.type == ComponentType.GATEWAY.value:
-                component_config.config["batch_size"] = profile.batch_size
-                component_config.config["batch_timeout"] = profile.batch_timeout
+                if profile.batch_size is not None:
+                    component_config.config["batch_size"] = profile.batch_size
+                if profile.batch_timeout is not None:
+                    component_config.config["batch_timeout"] = profile.batch_timeout
 
             # Convert string type to Enum if needed by factory
             # We now support string types in factory, so we pass it as is if it fails enum conversion
