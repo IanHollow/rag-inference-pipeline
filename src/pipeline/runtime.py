@@ -28,19 +28,31 @@ logger = logging.getLogger(__name__)
 
 
 def configure_libraries(settings: PipelineSettings) -> None:
-    """Configure library thread counts based on settings."""
-    # Set OMP_NUM_THREADS for libraries that respect it
-    os.environ["OMP_NUM_THREADS"] = str(settings.cpu_inference_threads)
+    """Configure library thread counts and optimization settings."""
+
+    # Disable tokenizer parallelism to avoid fork deadlocks when compile is used
+    os.environ["TOKENIZERS_PARALLELISM"] = "false" if settings.enable_torch_compile else "true"
 
     try:
         import torch
 
         torch.set_num_threads(settings.cpu_inference_threads)
         torch.set_num_interop_threads(max(2, settings.cpu_inference_threads // 2))
+
+        # Enable optimizations for CPU inference
+        if settings.only_cpu:
+            # Enable oneDNN optimizations (Intel MKL-DNN) for CPU
+            torch.backends.mkldnn.enabled = True  # type: ignore[assignment]
+            # Enable TF32 on Ampere+ GPUs
+            if hasattr(torch.backends, "cuda"):
+                torch.backends.cuda.matmul.allow_tf32 = True
+                torch.backends.cudnn.allow_tf32 = True
+
         logger.info(
-            "Configured torch threads: intra=%d, inter=%d",
+            "Configured torch threads: intra=%d, inter=%d, OMP_NUM_THREADS=%s",
             settings.cpu_inference_threads,
             max(2, settings.cpu_inference_threads // 2),
+            os.environ.get("OMP_NUM_THREADS", "not set"),
         )
     except ImportError:
         pass
@@ -48,8 +60,12 @@ def configure_libraries(settings: PipelineSettings) -> None:
     try:
         import faiss
 
-        faiss.omp_set_num_threads(settings.cpu_inference_threads)
-        logger.info("Configured faiss threads: %d", settings.cpu_inference_threads)
+        # FAISS uses OpenMP internally. We override OMP_NUM_THREADS=1 (set in run.sh
+        # to prevent deadlocks in other libraries) with a FAISS-specific thread count.
+        # This allows FAISS to use multiple threads for faster search while keeping
+        # other OpenMP-using libraries single-threaded.
+        faiss.omp_set_num_threads(settings.faiss_threads)
+        logger.info("Configured faiss threads: %d", settings.faiss_threads)
     except ImportError:
         pass
 

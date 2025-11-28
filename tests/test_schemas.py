@@ -300,8 +300,8 @@ class TestProfileSchemas:
 
         assert profile.name == "test_profile"
         assert profile.description == ""
-        assert profile.batch_size == 32
-        assert profile.batch_timeout == 0.1
+        assert profile.batch_size is None  # Defaults to None, uses settings
+        assert profile.batch_timeout is None  # Defaults to None, uses settings
         assert profile.components == []
         assert profile.routes == []
 

@@ -7,6 +7,7 @@ import os
 from pathlib import Path
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -18,6 +19,117 @@ import yaml
 
 REPO_ROOT = Path(__file__).parent.parent
 ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "experiments"
+
+# Marker to identify our pipeline processes
+PIPELINE_PROCESS_MARKER = "cs5416-ml-pipeline"
+
+
+def is_port_in_use(port: int) -> bool:
+    """Check if a port is currently in use."""
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
+        try:
+            s.bind(("localhost", port))
+            return False
+        except OSError:
+            return True
+
+
+def _is_pipeline_process(proc: psutil.Process) -> bool:
+    """Check if a process is a pipeline process from this project."""
+    try:
+        cmdline = proc.info.get("cmdline") or []
+        cwd = proc.info.get("cwd") or ""
+        name = proc.info.get("name") or ""
+        cmdline_str = " ".join(cmdline) if cmdline else ""
+
+        # Check if this is a Python process (name can be python, python3, Python, python3.10, etc.)
+        is_python = name.lower().startswith("python")
+
+        if is_python:
+            # Check if it's running from our project directory or has our marker
+            is_our_project = (
+                PIPELINE_PROCESS_MARKER in cwd or PIPELINE_PROCESS_MARKER in cmdline_str
+            )
+            # Check if it's a pipeline node (runs pipeline.runtime or src.pipeline)
+            is_pipeline = (
+                "pipeline.runtime" in cmdline_str
+                or "src.pipeline" in cmdline_str
+                or "uvicorn" in cmdline_str
+            )
+
+            return is_our_project and is_pipeline
+    except (psutil.NoSuchProcess, psutil.AccessDenied, psutil.ZombieProcess):
+        pass
+    return False
+
+
+def get_pipeline_processes() -> list[psutil.Process]:
+    """Find all running pipeline processes from this project."""
+    return [
+        proc
+        for proc in psutil.process_iter(["pid", "name", "cmdline", "cwd"])
+        if _is_pipeline_process(proc)
+    ]
+
+
+def _terminate_process(proc: psutil.Process) -> None:
+    """Terminate a single process safely."""
+    try:
+        print(f"  Terminating PID {proc.pid}: {' '.join(proc.cmdline()[:3])}...")
+        proc.terminate()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+
+def _kill_process(proc: psutil.Process) -> None:
+    """Force kill a single process safely."""
+    try:
+        print(f"  Force killing PID {proc.pid}...")
+        proc.kill()
+    except (psutil.NoSuchProcess, psutil.AccessDenied):
+        pass
+
+
+def kill_existing_pipeline_processes() -> None:
+    """Kill any existing pipeline processes from previous runs."""
+    procs = get_pipeline_processes()
+    if not procs:
+        return
+
+    print(f"Found {len(procs)} existing pipeline process(es), terminating...")
+    for proc in procs:
+        _terminate_process(proc)
+
+    # Wait for processes to terminate gracefully
+    _gone, alive = psutil.wait_procs(procs, timeout=5)
+
+    # Force kill any remaining
+    for proc in alive:
+        _kill_process(proc)
+
+    # Final wait
+    if alive:
+        psutil.wait_procs(alive, timeout=3)
+
+    print("Cleanup complete.")
+
+
+def ensure_ports_available(ports: list[int], max_wait: int = 10) -> None:
+    """Ensure the specified ports are available, waiting if necessary."""
+    start_time = time.time()
+    while time.time() - start_time < max_wait:
+        busy_ports = [p for p in ports if is_port_in_use(p)]
+        if not busy_ports:
+            return
+        print(f"Waiting for ports {busy_ports} to become available...")
+        time.sleep(1)
+
+    busy_ports = [p for p in ports if is_port_in_use(p)]
+    if busy_ports:
+        raise RuntimeError(
+            f"Ports {busy_ports} are still in use after {max_wait}s. "
+            "Please manually kill the processes using these ports."
+        )
 
 
 def load_manifest(path: str) -> dict[str, Any]:
@@ -105,12 +217,21 @@ def run_experiment(
     print(f"Starting experiment: {full_run_id}")
     print(f"Output directory: {output_dir}")
 
+    # Clean up any existing pipeline processes from previous runs
+    kill_existing_pipeline_processes()
+
+    # Determine which ports we need
+    nodes = manifest["nodes"]
+    total_nodes = len(nodes)
+    required_ports = [8000 + node["number"] for node in nodes]
+
+    # Ensure ports are available
+    ensure_ports_available(required_ports)
+
     if not skip_monitoring:
         start_monitoring()
 
     processes = []
-    nodes = manifest["nodes"]
-    total_nodes = len(nodes)
 
     experiment_start_time = time.time()
 
@@ -266,6 +387,15 @@ def run_experiment(
                 with contextlib.suppress(Exception):
                     os.killpg(os.getpgid(p.pid), signal.SIGKILL)
             f.close()
+
+        # Final cleanup: ensure all pipeline processes are dead
+        remaining = get_pipeline_processes()
+        if remaining:
+            print(f"Cleaning up {len(remaining)} remaining pipeline process(es)...")
+            for proc in remaining:
+                with contextlib.suppress(Exception):
+                    proc.kill()
+            psutil.wait_procs(remaining, timeout=5)
 
         # Copy Scalene reports if they exist
         scalene_src_dir = REPO_ROOT / "artifacts" / "scalene" / full_run_id

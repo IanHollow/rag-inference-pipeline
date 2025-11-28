@@ -4,6 +4,7 @@ Sentiment analysis module for the generation service.
 Manages nlptown/bert-base-multilingual-uncased-sentiment for sentiment classification.
 """
 
+import gc
 import logging
 import time
 from typing import ClassVar
@@ -78,13 +79,13 @@ class SentimentAnalyzer:
 
             # Use float16 for CUDA and MPS, float32 for CPU
             use_fp16 = self.device.type in ("cuda", "mps")
-            torch_dtype = torch.float16 if use_fp16 else torch.float32
+            model_dtype = torch.float16 if use_fp16 else torch.float32
 
             pipeline_result = hf_pipeline(
                 task="text-classification",
                 model=self.model_name,
                 device=device_arg,
-                torch_dtype=torch_dtype,
+                dtype=model_dtype,
             )
             self.pipeline = pipeline_result
 
@@ -113,6 +114,9 @@ class SentimentAnalyzer:
             # Delete the pipeline and its components
             del self.pipeline
             self.pipeline = None
+
+        # Force garbage collection before clearing device cache
+        gc.collect()
 
         if self.device.type == "cuda":
             torch.cuda.empty_cache()

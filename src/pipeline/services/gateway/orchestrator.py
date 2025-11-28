@@ -100,8 +100,10 @@ class Orchestrator:
             enable_adaptive=getattr(settings, "enable_adaptive_batching", True),
         )
 
-        # Apply min batch size from settings if adaptive
-        if self.batch_scheduler.policy:
+        # Note: The BatchScheduler's AdaptiveBatchPolicy already uses the configured
+        # batch_size as min_batch_size, so we don't need to override here unless
+        # settings.gateway_min_batch_size is larger
+        if self.batch_scheduler.policy and settings.gateway_min_batch_size > final_batch_size:
             self.batch_scheduler.policy.min_batch_size = settings.gateway_min_batch_size
 
         # Initialize cache

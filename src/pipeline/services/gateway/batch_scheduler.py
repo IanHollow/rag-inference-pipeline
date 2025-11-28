@@ -51,20 +51,27 @@ class AdaptiveBatchPolicy:
         Returns:
             Tuple of (new_batch_size, new_delay_seconds)
         """
-        # If queue is building up, increase batch size and delay to improve throughput
-        if queue_depth > 10:
+        # Scale batch size proportionally to queue depth
+        # This provides smoother scaling than discrete thresholds
+        if queue_depth >= self.max_batch_size:
+            # Queue is at or above max batch size - use maximum settings
             target_batch = self.max_batch_size
             target_delay = self.max_delay_sec
-        elif queue_depth > 5:
-            target_batch = self.max_batch_size // 2
-            target_delay = self.max_delay_sec / 2
+        elif queue_depth > 0:
+            # Scale linearly based on queue depth relative to max batch size
+            ratio = queue_depth / self.max_batch_size
+            target_batch = max(
+                self.min_batch_size,
+                int(self.min_batch_size + ratio * (self.max_batch_size - self.min_batch_size)),
+            )
+            target_delay = self.min_delay_sec + ratio * (self.max_delay_sec - self.min_delay_sec)
         else:
             target_batch = self.min_batch_size
             target_delay = self.min_delay_sec
 
-        # Smooth transitions using EWMA-like approach
-        self.current_batch_size = (self.current_batch_size * 0.7) + (target_batch * 0.3)
-        self.current_delay = (self.current_delay * 0.7) + (target_delay * 0.3)
+        # Smooth transitions using EWMA - use faster adaptation (0.5) for responsiveness
+        self.current_batch_size = (self.current_batch_size * 0.5) + (target_batch * 0.5)
+        self.current_delay = (self.current_delay * 0.5) + (target_delay * 0.5)
 
         # Clamp values
         final_batch_size = max(
@@ -119,11 +126,14 @@ class BatchScheduler(Generic[T]):
         self.enable_adaptive = enable_adaptive
 
         self.policy: AdaptiveBatchPolicy | None
+        self._configured_batch_size = batch_size  # Store original configured value
         if enable_adaptive:
             # Use the configured batch_size and timeout as the upper limits for the adaptive policy
+            # Under low load, will batch up to batch_size before timeout
+            # Under high load, can scale up to 4x batch_size
             self.policy = AdaptiveBatchPolicy(
-                min_batch_size=1,
-                max_batch_size=batch_size,
+                min_batch_size=batch_size,  # Don't go below configured batch_size
+                max_batch_size=batch_size * 4,  # Allow scaling up to 4x under high load
                 min_delay_sec=min(0.01, self.max_batch_delay_sec),
                 max_delay_sec=self.max_batch_delay_sec,
             )
@@ -188,6 +198,8 @@ class BatchScheduler(Generic[T]):
             # Update adaptive policy if enabled
             if self.enable_adaptive and self.policy:
                 new_size, new_delay = self.policy.update(len(self._pending_requests))
+                # Ensure we never reduce below configured batch size
+                new_size = max(new_size, self._configured_batch_size)
                 if new_size != self.batch_size:
                     logger.debug("Adaptive batching: size=%d, delay=%.3fs", new_size, new_delay)
                     self.batch_size = new_size

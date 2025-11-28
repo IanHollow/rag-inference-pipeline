@@ -36,7 +36,6 @@ from ...telemetry import (
     request_counter as pipeline_request_counter,
 )
 from ...utils.cache import LRUCache
-from ...utils.executors import ServiceExecutorFactory
 from .schemas import (
     ErrorResponse,
     RetrievalDocument,
@@ -320,11 +319,16 @@ class RetrievalExecutor:
     ) -> list[RetrievalResponseItem]:
         """
         Process a batch of retrieval requests.
+
+        FAISS search runs in a thread pool executor to:
+        1. Allow FAISS to use multiple threads (faiss.omp_set_num_threads)
+        2. Prevent blocking the async event loop during CPU-intensive search
+        This improves throughput by allowing concurrent request handling.
         """
+        import asyncio
+
         loop = asyncio.get_running_loop()
-        return await ServiceExecutorFactory.run_cpu_bound(
-            loop, "retrieval", self._process_batch_sync, batch
-        )
+        return await loop.run_in_executor(None, self._process_batch_sync, batch)
 
     def _process_batch_sync(
         self, batch: Batch[RetrievalResponseItem]
@@ -393,6 +397,8 @@ class RetrievalExecutor:
                 logger.info("Embedding generation completed in %.3fs", time.time() - emb_start)
 
             # Step 2: FAISS Search
+            # FAISS is called directly (not via executor) to use full OpenMP parallelism
+            # without thread conflicts. The batch scheduler serializes batches.
             faiss_start = time.time()
 
             doc_ids_batch: list[list[int]] = [[] for _ in range(batch_size)]
