@@ -1,9 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-echo "Starting ML Pipeline (3 nodes)..."
-echo ""
-
 # Load shared environment variables
 if [ -f .env.shared ]; then
 	echo "Loading shared environment from .env.shared"
@@ -14,6 +11,15 @@ if [ -f .env.shared ]; then
 else
 	echo "Warning: .env.shared not found, using default values"
 fi
+
+# Use environment variables or defaults
+TOTAL_NODES=${TOTAL_NODES:-3}
+NODE_0_IP=${NODE_0_IP:-"localhost:8000"}
+NODE_1_IP=${NODE_1_IP:-"localhost:8001"}
+NODE_2_IP=${NODE_2_IP:-"localhost:8002"}
+
+echo "Starting ML Pipeline ($TOTAL_NODES node(s))..."
+echo ""
 
 # Create logs directory if it doesn't exist
 mkdir -p logs
@@ -28,9 +34,9 @@ fi
 source .venv/bin/activate
 
 echo "Logs will be written to:"
-echo "    - logs/node0-gateway.log"
-echo "    - logs/node1-retrieval.log"
-echo "    - logs/node2-generation.log"
+for ((i = 0; i < TOTAL_NODES; i++)); do
+	echo "    - logs/node${i}.log"
+done
 echo ""
 
 # Array to store PIDs
@@ -54,32 +60,41 @@ cleanup() {
 # Trap Ctrl+C and other termination signals
 trap cleanup SIGINT SIGTERM EXIT
 
-# Start Node 0 (Gateway)
-echo "Starting Node 0 (Gateway)..."
-NODE_NUMBER=0 ./run.sh > logs/node0-gateway.log 2>&1 &
-PIDS+=($!)
-sleep 1
+# Helper function to get node IP
+get_node_ip() {
+	local node_num=$1
+	case $node_num in
+		0) echo "$NODE_0_IP" ;;
+		1) echo "$NODE_1_IP" ;;
+		2) echo "$NODE_2_IP" ;;
+		*) echo "localhost:$((8000 + node_num))" ;;
+	esac
+}
 
-# Start Node 1 (Retrieval)
-echo "Starting Node 1 (Retrieval)..."
-NODE_NUMBER=1 ./run.sh > logs/node1-retrieval.log 2>&1 &
-PIDS+=($!)
-sleep 1
+# Helper function to get port from IP:port string
+get_port() {
+	local ip_port=$1
+	echo "${ip_port##*:}"
+}
 
-# Start Node 2 (Generation)
-echo "Starting Node 2 (Generation)..."
-NODE_NUMBER=2 ./run.sh > logs/node2-generation.log 2>&1 &
-PIDS+=($!)
-sleep 1
+# Start all nodes
+for ((i = 0; i < TOTAL_NODES; i++)); do
+	node_ip=$(get_node_ip $i)
+	echo "Starting Node $i on $node_ip..."
+	TOTAL_NODES=$TOTAL_NODES NODE_NUMBER=$i NODE_0_IP=$NODE_0_IP NODE_1_IP=$NODE_1_IP NODE_2_IP=$NODE_2_IP ./run.sh > "logs/node${i}.log" 2>&1 &
+	PIDS+=($!)
+	sleep 1
+done
 
 echo ""
 echo "Waiting for all nodes to become healthy..."
 
 # Health check function - returns "healthy" or error status
 check_health() {
-	local port=$1
+	local host=$1
+	local port=$2
 	local response
-	response=$(curl -s -o /dev/null -w "%{http_code}" "http://localhost:$port/health" 2> /dev/null) || response="000"
+	response=$(curl -s -o /dev/null -w "%{http_code}" "http://${host}:${port}/health" 2> /dev/null) || response="000"
 	if [ "$response" = "200" ]; then
 		echo "healthy"
 	elif [ "$response" = "000" ] || [ -z "$response" ]; then
@@ -97,42 +112,30 @@ while true; do
 
 	# Clear line and move cursor up to overwrite previous status
 	if [ $count -gt 0 ]; then
-		# Move cursor up 4 lines to overwrite previous status block
-		echo -ne "\033[4A\033[K"
+		# Move cursor up to overwrite previous status block (TOTAL_NODES + 1 lines)
+		lines_to_clear=$((TOTAL_NODES + 1))
+		echo -ne "\033[${lines_to_clear}A\033[K"
 	fi
 
 	echo "Health Status (attempt $((count + 1))):"
 
-	# Check Gateway
-	gateway_status=$(check_health 8000)
-	if [ "$gateway_status" = "healthy" ]; then
-		nodes_ready=$((nodes_ready + 1))
-		echo -e "  Node 0 (Gateway)    :8000 - ✓ healthy\033[K"
-	else
-		echo -e "  Node 0 (Gateway)    :8000 - ✗ $gateway_status\033[K"
-	fi
+	# Check all nodes dynamically
+	for ((i = 0; i < TOTAL_NODES; i++)); do
+		node_ip=$(get_node_ip $i)
+		node_host="${node_ip%:*}"
+		node_port=$(get_port "$node_ip")
+		node_status=$(check_health "$node_host" "$node_port")
+		if [ "$node_status" = "healthy" ]; then
+			nodes_ready=$((nodes_ready + 1))
+			echo -e "  Node $i :$node_port - ✓ healthy\033[K"
+		else
+			echo -e "  Node $i :$node_port - ✗ $node_status\033[K"
+		fi
+	done
 
-	# Check Retrieval
-	retrieval_status=$(check_health 8001)
-	if [ "$retrieval_status" = "healthy" ]; then
-		nodes_ready=$((nodes_ready + 1))
-		echo -e "  Node 1 (Retrieval)  :8001 - ✓ healthy\033[K"
-	else
-		echo -e "  Node 1 (Retrieval)  :8001 - ✗ $retrieval_status\033[K"
-	fi
-
-	# Check Generation
-	generation_status=$(check_health 8002)
-	if [ "$generation_status" = "healthy" ]; then
-		nodes_ready=$((nodes_ready + 1))
-		echo -e "  Node 2 (Generation) :8002 - ✓ healthy\033[K"
-	else
-		echo -e "  Node 2 (Generation) :8002 - ✗ $generation_status\033[K"
-	fi
-
-	if [ $nodes_ready -eq 3 ]; then
+	if [ $nodes_ready -eq "$TOTAL_NODES" ]; then
 		echo ""
-		echo "All nodes are healthy and ready to accept requests!"
+		echo "All $TOTAL_NODES node(s) are healthy and ready to accept requests!"
 		echo "Monitor logs with: tail -f logs/*.log"
 		echo "Press Ctrl+C to stop all nodes"
 		echo ""
