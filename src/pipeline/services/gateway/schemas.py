@@ -7,7 +7,7 @@ import base64
 import msgspec
 from pydantic import Field, field_validator
 
-from ...base_schemas import BaseJSONModel
+from pipeline.base_schemas import BaseJSONModel
 
 # === Client schemas ===
 

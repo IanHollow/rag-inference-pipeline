@@ -15,8 +15,8 @@ import numpy as np
 from sentence_transformers import SentenceTransformer
 import torch
 
-from ..config import PipelineSettings
-from ..utils.cache import LRUCache
+from pipeline.config import PipelineSettings
+from pipeline.utils.cache import LRUCache
 
 T = TypeVar("T", bound=Callable[..., Any])
 

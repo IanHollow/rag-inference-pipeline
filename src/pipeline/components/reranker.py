@@ -15,7 +15,8 @@ from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreT
 if TYPE_CHECKING:
     from transformers.modeling_utils import PreTrainedModel
 
-from ..config import PipelineSettings
+from pipeline.config import PipelineSettings
+
 from .schemas import Document, RerankedDocument
 
 logger = logging.getLogger(__name__)

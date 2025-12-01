@@ -12,14 +12,14 @@ import time
 import msgspec
 from opentelemetry import trace
 
-from ...components.embedding import EmbeddingGenerator
-from ...components.reranker import Reranker
-from ...components.schemas import Document
-from ...components.sentiment import SentimentAnalyzer
-from ...components.toxicity import ToxicityFilter
-from ...config import get_settings
-from ...enums import ServiceEndpoint
-from ...telemetry import (
+from pipeline.components.embedding import EmbeddingGenerator
+from pipeline.components.reranker import Reranker
+from pipeline.components.schemas import Document
+from pipeline.components.sentiment import SentimentAnalyzer
+from pipeline.components.toxicity import ToxicityFilter
+from pipeline.config import get_settings
+from pipeline.enums import ServiceEndpoint
+from pipeline.telemetry import (
     SampledStageProfiler,
     batch_size_histogram,
     latency_histogram,
@@ -27,7 +27,8 @@ from ...telemetry import (
     rpc_duration_histogram,
     stage_duration_gauge,
 )
-from ...utils.cache import LRUCache
+from pipeline.utils.cache import LRUCache
+
 from .batch_scheduler import Batch, BatchScheduler
 from .rpc_client import RPCClient, RPCError
 from .schemas import (

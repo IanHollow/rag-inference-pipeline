@@ -13,19 +13,20 @@ from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
 from prometheus_client import generate_latest
 
-from ...component_registry import ComponentRegistry
-from ...components.schemas import Document
-from ...config import get_settings
-from ...dependencies import get_registry
-from ...services.gateway.batch_scheduler import Batch, BatchScheduler
-from ...services.gateway.schemas import PendingRequest
-from ...telemetry import (
+from pipeline.component_registry import ComponentRegistry
+from pipeline.components.schemas import Document
+from pipeline.config import get_settings
+from pipeline.dependencies import get_registry
+from pipeline.services.gateway.batch_scheduler import Batch, BatchScheduler
+from pipeline.services.gateway.schemas import PendingRequest
+from pipeline.telemetry import (
     error_counter as pipeline_error_counter,
     get_resource_snapshot,
     memory_gauge,
     request_counter as pipeline_request_counter,
 )
-from ...utils.executors import ServiceExecutorFactory
+from pipeline.utils.executors import ServiceExecutorFactory
+
 from .schemas import (
     ErrorResponse,
     GenerationRequest,
@@ -36,11 +37,11 @@ from .schemas import (
 from .service import GenerationService
 
 if TYPE_CHECKING:
-    from ...components.document_store import DocumentStore
-    from ...components.llm import LLMGenerator
-    from ...components.reranker import Reranker
-    from ...components.sentiment import SentimentAnalyzer
-    from ...components.toxicity import ToxicityFilter
+    from pipeline.components.document_store import DocumentStore
+    from pipeline.components.llm import LLMGenerator
+    from pipeline.components.reranker import Reranker
+    from pipeline.components.sentiment import SentimentAnalyzer
+    from pipeline.components.toxicity import ToxicityFilter
 
 # Configure logging
 logging.basicConfig(
@@ -287,7 +288,7 @@ async def clear_cache(request: Request) -> dict[str, str]:
         if executor:
             document_store = executor.registry.get("document_store")
             # Import locally to avoid circular imports or runtime overhead
-            from ...components.document_store import DocumentStore
+            from pipeline.components.document_store import DocumentStore
 
             if isinstance(document_store, DocumentStore):
                 document_store.clear_cache()

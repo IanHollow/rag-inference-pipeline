@@ -4,10 +4,11 @@ Generation service module.
 Provides reranking, LLM generation, sentiment analysis, and toxicity filtering.
 """
 
-from ...components.llm import LLMGenerator
-from ...components.reranker import Reranker
-from ...components.sentiment import SentimentAnalyzer
-from ...components.toxicity import ToxicityFilter
+from pipeline.components.llm import LLMGenerator
+from pipeline.components.reranker import Reranker
+from pipeline.components.sentiment import SentimentAnalyzer
+from pipeline.components.toxicity import ToxicityFilter
+
 from .api import router
 from .schemas import (
     Document,

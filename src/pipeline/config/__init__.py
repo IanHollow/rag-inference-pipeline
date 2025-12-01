@@ -10,7 +10,7 @@ import os
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from ..enums import NodeRole, derive_node_role
+from pipeline.enums import NodeRole, derive_node_role
 
 
 def _default_cpu_threads() -> int:

@@ -20,13 +20,13 @@ import msgspec
 from opentelemetry import trace
 from prometheus_client import REGISTRY, Counter, Histogram, generate_latest
 
-from ...component_registry import ComponentRegistry
-from ...components.schemas import Document
-from ...config import get_settings
-from ...dependencies import get_registry
-from ...services.gateway.batch_scheduler import Batch, BatchScheduler
-from ...services.gateway.schemas import PendingRequest
-from ...telemetry import (
+from pipeline.component_registry import ComponentRegistry
+from pipeline.components.schemas import Document
+from pipeline.config import get_settings
+from pipeline.dependencies import get_registry
+from pipeline.services.gateway.batch_scheduler import Batch, BatchScheduler
+from pipeline.services.gateway.schemas import PendingRequest
+from pipeline.telemetry import (
     SampledStageProfiler,
     batch_size_histogram as pipeline_batch_size_histogram,
     error_counter as pipeline_error_counter,
@@ -35,7 +35,8 @@ from ...telemetry import (
     memory_gauge,
     request_counter as pipeline_request_counter,
 )
-from ...utils.cache import LRUCache
+from pipeline.utils.cache import LRUCache
+
 from .schemas import (
     ErrorResponse,
     RetrievalDocument,
@@ -46,10 +47,10 @@ from .schemas import (
 )
 
 if TYPE_CHECKING:
-    from ...components.document_store import DocumentStore
-    from ...components.embedding import EmbeddingGenerator
-    from ...components.faiss_store import FAISSStore
-    from ...components.reranker import Reranker
+    from pipeline.components.document_store import DocumentStore
+    from pipeline.components.embedding import EmbeddingGenerator
+    from pipeline.components.faiss_store import FAISSStore
+    from pipeline.components.reranker import Reranker
 
 MetricType = Counter | Histogram
 T = TypeVar("T", bound=MetricType)
@@ -457,7 +458,7 @@ class RetrievalExecutor:
                 mode = getattr(settings, "documents_payload_mode", "full")
 
                 if mode == "id_only":
-                    from ...components.document_store import Document as StoreDocument
+                    from pipeline.components.document_store import Document as StoreDocument
 
                     for i, doc_ids in enumerate(doc_ids_batch):
                         dists = distances_batch[i]
@@ -517,7 +518,7 @@ class RetrievalExecutor:
                     logger.info("Document fetch completed in %.3fs", time.time() - fetch_start)
             else:
                 # Dummy docs
-                from ...components.document_store import Document as StoreDocument
+                from pipeline.components.document_store import Document as StoreDocument
 
                 for doc_ids in doc_ids_batch:
                     docs = [
@@ -529,8 +530,8 @@ class RetrievalExecutor:
             response_items: list[RetrievalResponseItem] = []
 
             # Import Document for type hint if needed, though it's likely available via StoreDocument alias or similar
-            from ...components.document_store import Document as StoreDocument
-            from ...services.gateway.schemas import PendingRequest, PendingRequestStruct
+            from pipeline.components.document_store import Document as StoreDocument
+            from pipeline.services.gateway.schemas import PendingRequest, PendingRequestStruct
 
             def process_single_item(
                 args: tuple[

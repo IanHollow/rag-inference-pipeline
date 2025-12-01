@@ -10,8 +10,8 @@ import sqlite3
 import threading
 from typing import Any, cast
 
-from ..config import PipelineSettings
-from ..utils.cache import CompressedLRUCache
+from pipeline.config import PipelineSettings
+from pipeline.utils.cache import CompressedLRUCache
 
 logger = logging.getLogger(__name__)
 

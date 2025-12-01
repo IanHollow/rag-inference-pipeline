@@ -13,19 +13,20 @@ import lz4.frame  # type: ignore
 import msgspec
 from opentelemetry import trace
 
-from ...components.document_store import DocumentStore
-from ...components.llm import LLMGenerator
-from ...components.reranker import Reranker
-from ...components.sentiment import SentimentAnalyzer
-from ...components.toxicity import ToxicityFilter
-from ...config import get_settings
-from ...telemetry import (
+from pipeline.components.document_store import DocumentStore
+from pipeline.components.llm import LLMGenerator
+from pipeline.components.reranker import Reranker
+from pipeline.components.sentiment import SentimentAnalyzer
+from pipeline.components.toxicity import ToxicityFilter
+from pipeline.config import get_settings
+from pipeline.telemetry import (
     SampledStageProfiler,
     batch_size_histogram as pipeline_batch_size_histogram,
     latency_histogram as pipeline_latency_histogram,
     request_counter as pipeline_request_counter,
     stage_duration_gauge,
 )
+
 from .metrics import (
     generation_batch_size,
     generation_request_duration,

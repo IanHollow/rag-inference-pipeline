@@ -14,18 +14,19 @@ from opentelemetry import trace
 from prometheus_client import generate_latest
 from pydantic import ValidationError
 
-from ...components.embedding import EmbeddingGenerator
-from ...components.reranker import Reranker
-from ...components.sentiment import SentimentAnalyzer
-from ...components.toxicity import ToxicityFilter
-from ...config import get_settings
-from ...dependencies import get_component
-from ...telemetry import (
+from pipeline.components.embedding import EmbeddingGenerator
+from pipeline.components.reranker import Reranker
+from pipeline.components.sentiment import SentimentAnalyzer
+from pipeline.components.toxicity import ToxicityFilter
+from pipeline.config import get_settings
+from pipeline.dependencies import get_component
+from pipeline.telemetry import (
     error_counter as pipeline_error_counter,
     get_resource_snapshot,
     memory_gauge,
     request_counter as pipeline_request_counter,
 )
+
 from .metrics import (
     error_counter as gateway_error_counter,
     latency_histogram,

@@ -21,8 +21,8 @@ from tenacity import (
 )
 import zstandard as zstd
 
-from ...config import get_settings
-from ...telemetry import metrics
+from pipeline.config import get_settings
+from pipeline.telemetry import metrics
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
