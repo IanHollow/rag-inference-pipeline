@@ -251,6 +251,7 @@ class TestLLMGenerator:
             mock_tokenizer.return_value = mock_inputs
 
             mock_tokenizer.batch_decode.return_value = ["Mocked response"]
+            mock_tokenizer.decode.return_value = "Mocked response"
             mock_tokenizer.eos_token_id = 2
 
             # Mock model behavior
@@ -520,7 +521,14 @@ class TestGenerationService:
         def health() -> dict[str, Any]:
             return {"status": "healthy", "models_loaded": True}
 
-        yield TestClient(app)
+        # Patch settings to use 'full' payload mode so DocumentStore is not required
+        with patch("pipeline.services.generation.service.settings") as mock_settings:
+            mock_settings.documents_payload_mode = "full"
+            mock_settings.enable_profiling = False
+            mock_settings.profiling_sample_rate = 0.0
+            mock_settings.profiling_run_id = "test"
+            mock_settings.node_number = 0
+            yield TestClient(app)
 
     def test_health_endpoint(self, mock_app: TestClient) -> None:
         """Test health check endpoint."""
