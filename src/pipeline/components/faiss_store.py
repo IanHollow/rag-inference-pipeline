@@ -12,7 +12,7 @@ import faiss
 import numpy as np
 import torch
 
-from ..config import PipelineSettings
+from pipeline.config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 

@@ -13,8 +13,9 @@ import logging
 import time
 from typing import Generic, TypeVar
 
-from ...config import get_settings
-from ...telemetry import batch_flush_counter, queue_depth_gauge
+from pipeline.config import get_settings
+from pipeline.telemetry import batch_flush_counter, queue_depth_gauge
+
 from .schemas import PendingRequest, PendingRequestStruct
 
 logger = logging.getLogger(__name__)

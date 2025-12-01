@@ -10,8 +10,8 @@ import logging
 import msgspec
 from pydantic import Field, field_validator
 
-from ...base_schemas import BaseJSONModel
-from ...components.schemas import Document, DocumentStruct, RerankedDocument
+from pipeline.base_schemas import BaseJSONModel
+from pipeline.components.schemas import Document, DocumentStruct, RerankedDocument
 
 logger = logging.getLogger(__name__)
 

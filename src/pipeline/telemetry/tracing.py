@@ -22,7 +22,7 @@ from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExport
 if TYPE_CHECKING:
     from fastapi import FastAPI
 
-    from ..config import PipelineSettings
+    from pipeline.config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 _setup_lock = Lock()

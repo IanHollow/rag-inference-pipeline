@@ -20,7 +20,8 @@ from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenize
 if TYPE_CHECKING:
     from transformers.modeling_utils import PreTrainedModel
 
-    from ..config import PipelineSettings
+    from pipeline.config import PipelineSettings
+
     from .schemas import RerankedDocument
 
 

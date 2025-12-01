@@ -12,7 +12,7 @@ from typing import ClassVar
 import torch
 from transformers import TextClassificationPipeline, pipeline as hf_pipeline
 
-from ..config import PipelineSettings
+from pipeline.config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 

@@ -1,7 +1,7 @@
 import msgspec
 from pydantic import Field
 
-from ..base_schemas import BaseJSONModel
+from pipeline.base_schemas import BaseJSONModel
 
 
 class Document(BaseJSONModel):

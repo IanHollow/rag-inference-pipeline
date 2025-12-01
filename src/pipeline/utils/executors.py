@@ -6,7 +6,7 @@ import logging
 import os
 from typing import ClassVar, TypeVar
 
-from ..config import PipelineSettings
+from pipeline.config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 

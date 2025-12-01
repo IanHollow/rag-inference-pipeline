@@ -6,8 +6,8 @@ from typing import Generic, TypeVar
 import lz4.frame  # type: ignore
 import orjson
 
-from ..config import get_settings
-from ..telemetry import metrics
+from pipeline.config import get_settings
+from pipeline.telemetry import metrics
 
 logger = logging.getLogger(__name__)
 

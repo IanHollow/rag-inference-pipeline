@@ -125,6 +125,7 @@ select = [
   "W",     # Warning
   "F",     # Pyflakes
   "I",     # isort
+  "TID",   # flake8-tidy-imports
   "N",     # pep8-naming
   "UP",    # pyupgrade
   "B",     # flake8-bugbear
