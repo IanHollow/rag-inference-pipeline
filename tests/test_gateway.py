@@ -31,8 +31,6 @@ from pipeline.services.gateway.schemas import (
     RetrievalResponse,
 )
 
-# from pipeline.services.gateway_app import QueryRequest, QueryResponse
-
 
 class TestBatchScheduler:
     """Tests for BatchScheduler class."""
@@ -185,7 +183,8 @@ class TestRPCClient:
         mock_response.status_code = 500
 
         def raise_status() -> None:
-            raise httpx.HTTPStatusError("Server error", request=MagicMock(), response=mock_response)
+            msg = "Server error"
+            raise httpx.HTTPStatusError(msg, request=MagicMock(), response=mock_response)
 
         mock_response.raise_for_status = raise_status
 
@@ -207,7 +206,8 @@ class TestRPCClient:
         mock_response.status_code = 400
 
         def raise_status() -> None:
-            raise httpx.HTTPStatusError("Bad request", request=MagicMock(), response=mock_response)
+            msg = "Bad request"
+            raise httpx.HTTPStatusError(msg, request=MagicMock(), response=mock_response)
 
         mock_response.raise_for_status = raise_status
 

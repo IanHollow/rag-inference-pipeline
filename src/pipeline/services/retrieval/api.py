@@ -15,17 +15,19 @@ from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 from fastapi import APIRouter, HTTPException, Request, status
 from fastapi.responses import Response
-import lz4.frame  # type: ignore
+import lz4.frame  # type: ignore[import-untyped]
 import msgspec
+import numpy as np
 from opentelemetry import trace
 from prometheus_client import REGISTRY, Counter, Histogram, generate_latest
 
 from pipeline.component_registry import ComponentRegistry
+from pipeline.components.document_store import Document as StoreDocument
 from pipeline.components.schemas import Document
 from pipeline.config import get_settings
 from pipeline.dependencies import get_registry
 from pipeline.services.gateway.batch_scheduler import Batch, BatchScheduler
-from pipeline.services.gateway.schemas import PendingRequest
+from pipeline.services.gateway.schemas import PendingRequest, PendingRequestStruct
 from pipeline.telemetry import (
     SampledStageProfiler,
     batch_size_histogram as pipeline_batch_size_histogram,
@@ -46,6 +48,7 @@ from .schemas import (
     RetrievalResponseItem,
 )
 
+
 if TYPE_CHECKING:
     from pipeline.components.document_store import DocumentStore
     from pipeline.components.embedding import EmbeddingGenerator
@@ -61,6 +64,25 @@ logging.basicConfig(
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
 )
 logger = logging.getLogger(__name__)
+
+
+def _extract_embeddings_from_requests(
+    requests: Sequence[PendingRequest | PendingRequestStruct],
+) -> np.ndarray:
+    """
+    Extract embeddings from batch requests, validating all are present.
+
+    Raises:
+        ValueError: If any request is missing an embedding.
+    """
+    embedding_list = []
+    for req in requests:
+        if req.embedding is None:
+            msg = "Missing embedding in batch"
+            raise ValueError(msg)
+        embedding_list.append(req.embedding)
+    return np.array(embedding_list).astype("float32")
+
 
 # Global state
 settings = get_settings()
@@ -190,32 +212,32 @@ async def retrieve(
 
     retrieval_requests_total.inc()
 
+    executor = await get_executor(request)
+
+    # Check readiness before processing
+    faiss_store = executor.registry.get("faiss_store")
+    embedding_generator = executor.registry.get("embedding_generator")
+
+    if not faiss_store or not getattr(faiss_store, "is_loaded", False):
+        _record_pipeline_error("service_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service not ready (FAISS store not loaded)",
+        )
+
+    # Only check embedding generator if we actually need it (missing embeddings in request)
+    needs_embedding = any(item.embedding is None for item in retrieval_request.items)
+    # If we need embeddings, the generator must be present and loaded
+    if needs_embedding and (
+        not embedding_generator or not getattr(embedding_generator, "is_loaded", False)
+    ):
+        _record_pipeline_error("service_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service not ready (Embedding generator not loaded)",
+        )
+
     try:
-        executor = await get_executor(request)
-
-        # Check readiness
-        faiss_store = executor.registry.get("faiss_store")
-        embedding_generator = executor.registry.get("embedding_generator")
-
-        if not faiss_store or not getattr(faiss_store, "is_loaded", False):
-            _record_pipeline_error("service_unavailable")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service not ready (FAISS store not loaded)",
-            )
-
-        # Only check embedding generator if we actually need it (missing embeddings in request)
-        needs_embedding = any(item.embedding is None for item in retrieval_request.items)
-        # If we need embeddings, the generator must be present and loaded
-        if needs_embedding and (
-            not embedding_generator or not getattr(embedding_generator, "is_loaded", False)
-        ):
-            _record_pipeline_error("service_unavailable")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service not ready (Embedding generator not loaded)",
-            )
-
         # Enqueue all items
         futures = [executor.process_request(item) for item in retrieval_request.items]
         results = await asyncio.gather(*futures)
@@ -246,12 +268,9 @@ async def retrieve(
             detail=str(e),
         ) from e
 
-    except HTTPException as e:
-        raise e
-
     except Exception as e:
         _record_pipeline_error("unknown")
-        logger.exception("Error processing retrieval batch: %s", e)
+        logger.exception("Error processing retrieval batch")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process retrieval batch: {e!s}",
@@ -326,10 +345,188 @@ class RetrievalExecutor:
         2. Prevent blocking the async event loop during CPU-intensive search
         This improves throughput by allowing concurrent request handling.
         """
-        import asyncio
-
         loop = asyncio.get_running_loop()
         return await loop.run_in_executor(None, self._process_batch_sync, batch)
+
+    def _get_embeddings(
+        self,
+        batch: Batch[RetrievalResponseItem],
+        profiler: SampledStageProfiler,
+    ) -> np.ndarray:
+        """Get embeddings from requests or generate them."""
+        # Check if embeddings are provided in the first request
+        if batch.requests[0].embedding is not None:
+            return _extract_embeddings_from_requests(batch.requests)
+
+        embedding_generator = cast(
+            "EmbeddingGenerator | None", self.registry.get("embedding_generator")
+        )
+        if not embedding_generator:
+            msg = "Embedding generator not available"
+            raise RuntimeError(msg)
+
+        queries = [req.query for req in batch.requests]
+        emb_start = time.time()
+        with profiler.track("retrieval.embedding"):
+            embeddings = embedding_generator.encode(queries)
+        embedding_duration.observe(time.time() - emb_start)
+        logger.info("Embedding generation completed in %.3fs", time.time() - emb_start)
+        return embeddings
+
+    def _search_faiss_with_cache(
+        self,
+        embeddings: np.ndarray,
+        batch_size: int,
+        profiler: SampledStageProfiler,
+    ) -> tuple[list[list[int]], list[list[float]]]:
+        """Perform FAISS search with optional caching."""
+        faiss_store = cast("FAISSStore", self.registry.get("faiss_store"))
+        doc_ids_batch: list[list[int]] = [[] for _ in range(batch_size)]
+        distances_batch: list[list[float]] = [[] for _ in range(batch_size)]
+
+        if getattr(settings, "disable_cache_for_profiling", True):
+            with profiler.track("retrieval.faiss_search"):
+                distances, indices = faiss_store.search(embeddings, settings.retrieval_k)
+            return [row.tolist() for row in indices], [row.tolist() for row in distances]
+
+        # With caching: check cache first
+        missing_indices = []
+        missing_embeddings = []
+
+        for i in range(batch_size):
+            embedding = embeddings[i]
+            key = hashlib.sha256(embedding.tobytes()).hexdigest()
+            with self._lock:
+                cached = self.cache.get(key)
+            if cached:
+                doc_ids_batch[i], distances_batch[i] = cached
+            else:
+                missing_indices.append(i)
+                missing_embeddings.append(embedding)
+
+        if missing_embeddings:
+            missing_embeddings_np = np.array(missing_embeddings)
+            with profiler.track("retrieval.faiss_search"):
+                distances, indices = faiss_store.search(missing_embeddings_np, settings.retrieval_k)
+
+            for i, idx in enumerate(missing_indices):
+                doc_ids = indices[i].tolist()
+                dists = distances[i].tolist()
+                doc_ids_batch[idx] = doc_ids
+                distances_batch[idx] = dists
+
+                # Update cache
+                key = hashlib.sha256(missing_embeddings[i].tobytes()).hexdigest()
+                with self._lock:
+                    self.cache.put(key, (doc_ids, dists))
+        else:
+            logger.debug("Cache hit for all %d retrieval items", batch_size)
+
+        return doc_ids_batch, distances_batch
+
+    def _fetch_documents(
+        self,
+        doc_ids_batch: list[list[int]],
+        batch_size: int,
+        profiler: SampledStageProfiler,
+    ) -> list[list[StoreDocument]]:
+        """Fetch documents from the document store."""
+        document_store = cast("DocumentStore | None", self.registry.get("document_store"))
+
+        if not document_store:
+            # Return dummy docs
+            return [
+                [StoreDocument(doc_id=doc_id, title="", content="") for doc_id in doc_ids]
+                for doc_ids in doc_ids_batch
+            ]
+
+        mode = getattr(settings, "documents_payload_mode", "full")
+
+        if mode == "id_only":
+            return [
+                [StoreDocument(doc_id=doc_id, title="", content="") for doc_id in doc_ids]
+                for doc_ids in doc_ids_batch
+            ]
+
+        # Fetch documents (compressed or full mode)
+        fetch_start = time.time()
+        with profiler.track("retrieval.document_fetch"):
+            max_workers = min(settings.cpu_worker_threads, batch_size)
+            if max_workers > 1:
+                with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                    futures = [
+                        executor.submit(
+                            document_store.fetch_documents_batch,
+                            [doc_ids],
+                            truncate_length=settings.truncate_length,
+                        )
+                        for doc_ids in doc_ids_batch
+                    ]
+                    documents_batch = [f.result()[0] for f in futures]
+            else:
+                documents_batch = document_store.fetch_documents_batch(
+                    doc_ids_batch, truncate_length=settings.truncate_length
+                )
+        document_fetch_duration.observe(time.time() - fetch_start)
+        if mode != "compressed":
+            logger.info("Document fetch completed in %.3fs", time.time() - fetch_start)
+        return documents_batch
+
+    def _build_response_item(
+        self,
+        req: PendingRequest | PendingRequestStruct,
+        docs: list[StoreDocument],
+        scores: list[float],
+        reranker: "Reranker | None",
+    ) -> RetrievalResponseItem:
+        """Build a single retrieval response item with optional reranking."""
+        retrieval_docs = [
+            RetrievalDocument(
+                doc_id=doc.doc_id,
+                title=doc.title,
+                content=doc.content,
+                category=doc.category or "",
+                score=float(score),
+            )
+            for doc, score in zip(docs, scores, strict=False)
+        ]
+
+        if reranker:
+            reranker_input = [
+                Document(
+                    doc_id=d.doc_id,
+                    title=d.title,
+                    content=d.content,
+                    category=d.category,
+                )
+                for d in retrieval_docs
+            ]
+            reranked = reranker.rerank(req.query, reranker_input)
+            retrieval_docs = [
+                RetrievalDocument(
+                    doc_id=d.doc_id,
+                    title=d.title,
+                    content=d.content,
+                    category=d.category,
+                    score=d.score,
+                )
+                for d in reranked
+            ]
+
+        # Handle compression
+        compressed_payload = None
+        mode = getattr(settings, "documents_payload_mode", "full")
+        if mode == "compressed":
+            docs_dicts = [d.model_dump() for d in retrieval_docs]
+            serialized = msgspec.json.encode(docs_dicts)
+            compressed_payload = lz4.frame.compress(serialized)
+            retrieval_docs = []
+
+        return RetrievalResponseItem(
+            request_id=req.request_id,
+            docs=retrieval_docs,
+            compressed_docs=compressed_payload,
+        )
 
     def _process_batch_sync(
         self, batch: Batch[RetrievalResponseItem]
@@ -337,16 +534,12 @@ class RetrievalExecutor:
         """
         Synchronous processing of a batch of retrieval requests.
         """
-        # Get components
         faiss_store = cast("FAISSStore", self.registry.get("faiss_store"))
-        document_store = cast("DocumentStore | None", self.registry.get("document_store"))
-        embedding_generator = cast(
-            "EmbeddingGenerator | None", self.registry.get("embedding_generator")
-        )
         reranker = cast("Reranker | None", self.registry.get("reranker"))
 
         if not faiss_store:
-            raise RuntimeError("FAISS store not available")
+            msg = "FAISS store not available"
+            raise RuntimeError(msg)
 
         profiler = SampledStageProfiler(
             enabled=settings.enable_profiling,
@@ -369,279 +562,79 @@ class RetrievalExecutor:
             },
         ):
             # Step 1: Get embeddings
-            embeddings = None
-
-            # Check if embeddings are provided
-            if batch.requests[0].embedding is not None:
-                try:
-                    import numpy as np
-
-                    embedding_list = []
-                    for req in batch.requests:
-                        if req.embedding is None:
-                            raise ValueError("Missing embedding in batch")
-                        embedding_list.append(req.embedding)
-                    embeddings = np.array(embedding_list).astype("float32")
-                except Exception as e:
-                    logger.error("Error processing embeddings: %s", e)
-                    raise
-
-            else:
-                if not embedding_generator:
-                    raise RuntimeError("Embedding generator not available")
-
-                queries = [req.query for req in batch.requests]
-                emb_start = time.time()
-                with profiler.track("retrieval.embedding"):
-                    embeddings = embedding_generator.encode(queries)
-                embedding_duration.observe(time.time() - emb_start)
-                logger.info("Embedding generation completed in %.3fs", time.time() - emb_start)
+            embeddings = self._get_embeddings(batch, profiler)
 
             # Step 2: FAISS Search
-            # FAISS is called directly (not via executor) to use full OpenMP parallelism
-            # without thread conflicts. The batch scheduler serializes batches.
             faiss_start = time.time()
-
-            doc_ids_batch: list[list[int]] = [[] for _ in range(batch_size)]
-            distances_batch: list[list[float]] = [[] for _ in range(batch_size)]
-
-            if getattr(settings, "disable_cache_for_profiling", True):
-                with profiler.track("retrieval.faiss_search"):
-                    distances, indices = faiss_store.search(embeddings, settings.retrieval_k)
-                doc_ids_batch = [row.tolist() for row in indices]
-                distances_batch = [row.tolist() for row in distances]
-            else:
-                missing_indices = []
-                missing_embeddings = []
-
-                for i in range(batch_size):
-                    embedding = embeddings[i]
-                    key = hashlib.sha256(embedding.tobytes()).hexdigest()
-                    with self._lock:
-                        cached = self.cache.get(key)
-                    if cached:
-                        doc_ids_batch[i], distances_batch[i] = cached
-                    else:
-                        missing_indices.append(i)
-                        missing_embeddings.append(embedding)
-
-                if missing_embeddings:
-                    import numpy as np
-
-                    missing_embeddings_np = np.array(missing_embeddings)
-                    with profiler.track("retrieval.faiss_search"):
-                        distances, indices = faiss_store.search(
-                            missing_embeddings_np, settings.retrieval_k
-                        )
-
-                    for i, idx in enumerate(missing_indices):
-                        doc_ids = indices[i].tolist()
-                        dists = distances[i].tolist()
-                        doc_ids_batch[idx] = doc_ids
-                        distances_batch[idx] = dists
-
-                        # Update cache
-                        key = hashlib.sha256(missing_embeddings[i].tobytes()).hexdigest()
-                        with self._lock:
-                            self.cache.put(key, (doc_ids, dists))
-                else:
-                    logger.debug("Cache hit for all %d retrieval items", batch_size)
-
+            doc_ids_batch, distances_batch = self._search_faiss_with_cache(
+                embeddings, batch_size, profiler
+            )
             faiss_search_duration.observe(time.time() - faiss_start)
             logger.info("FAISS search completed in %.3fs", time.time() - faiss_start)
 
             # Step 3: Fetch Documents
-            documents_batch = []
+            documents_batch = self._fetch_documents(doc_ids_batch, batch_size, profiler)
 
-            if document_store:
-                # Check handoff mode
-                mode = getattr(settings, "documents_payload_mode", "full")
-
-                if mode == "id_only":
-                    from pipeline.components.document_store import Document as StoreDocument
-
-                    for i, doc_ids in enumerate(doc_ids_batch):
-                        dists = distances_batch[i]
-                        docs = []
-                        for _j, doc_id in enumerate(doc_ids):
-                            doc = StoreDocument(doc_id=doc_id, title="", content="")
-                            docs.append(doc)
-                        documents_batch.append(docs)
-
-                elif mode == "compressed":
-                    # Fetch full docs then compress
-                    fetch_start = time.time()
-                    with profiler.track("retrieval.document_fetch"):
-                        # Parallelize fetch if batch size > 1
-                        max_workers = min(settings.cpu_worker_threads, batch_size)
-                        if max_workers > 1:
-                            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                                futures = [
-                                    executor.submit(
-                                        document_store.fetch_documents_batch,
-                                        [doc_ids],
-                                        truncate_length=settings.truncate_length,
-                                    )
-                                    for doc_ids in doc_ids_batch
-                                ]
-                                results = [f.result()[0] for f in futures]
-                                documents_batch = results
-                        else:
-                            documents_batch = document_store.fetch_documents_batch(
-                                doc_ids_batch, truncate_length=settings.truncate_length
-                            )
-                    document_fetch_duration.observe(time.time() - fetch_start)
-
-                else:
-                    # Full fetch
-                    fetch_start = time.time()
-                    with profiler.track("retrieval.document_fetch"):
-                        # Parallelize fetch if batch size > 1
-                        max_workers = min(settings.cpu_worker_threads, batch_size)
-                        if max_workers > 1:
-                            with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                                futures = [
-                                    executor.submit(
-                                        document_store.fetch_documents_batch,
-                                        [doc_ids],
-                                        truncate_length=settings.truncate_length,
-                                    )
-                                    for doc_ids in doc_ids_batch
-                                ]
-                                results = [f.result()[0] for f in futures]
-                                documents_batch = results
-                        else:
-                            documents_batch = document_store.fetch_documents_batch(
-                                doc_ids_batch, truncate_length=settings.truncate_length
-                            )
-                    document_fetch_duration.observe(time.time() - fetch_start)
-                    logger.info("Document fetch completed in %.3fs", time.time() - fetch_start)
-            else:
-                # Dummy docs
-                from pipeline.components.document_store import Document as StoreDocument
-
-                for doc_ids in doc_ids_batch:
-                    docs = [
-                        StoreDocument(doc_id=doc_id, title="", content="") for doc_id in doc_ids
-                    ]
-                    documents_batch.append(docs)
-
-            # Step 4: Build Response Items & Rerank
-            response_items: list[RetrievalResponseItem] = []
-
-            # Import Document for type hint if needed, though it's likely available via StoreDocument alias or similar
-            from pipeline.components.document_store import Document as StoreDocument
-            from pipeline.services.gateway.schemas import PendingRequest, PendingRequestStruct
-
-            def process_single_item(
-                args: tuple[
-                    int, PendingRequest | PendingRequestStruct, list[StoreDocument], list[float]
-                ],
-            ) -> RetrievalResponseItem:
-                _idx, req, docs, scores = args
-                retrieval_docs = [
-                    RetrievalDocument(
-                        doc_id=doc.doc_id,
-                        title=doc.title,
-                        content=doc.content,
-                        category=doc.category or "",
-                        score=float(score),
-                    )
-                    for doc, score in zip(docs, scores, strict=False)
-                ]
-
-                # Step 5: Rerank
-                if reranker:
-                    # Convert to Document
-                    reranker_input = [
-                        Document(
-                            doc_id=d.doc_id,
-                            title=d.title,
-                            content=d.content,
-                            category=d.category,
-                        )
-                        for d in retrieval_docs
-                    ]
-                    reranked = reranker.rerank(req.query, reranker_input)
-
-                    retrieval_docs = [
-                        RetrievalDocument(
-                            doc_id=d.doc_id,
-                            title=d.title,
-                            content=d.content,
-                            category=d.category,
-                            score=d.score,
-                        )
-                        for d in reranked
-                    ]
-
-                # Handle compression
-                compressed_payload = None
-                mode = getattr(settings, "documents_payload_mode", "full")
-                if mode == "compressed":
-                    # Serialize and compress
-                    docs_dicts = [d.model_dump() for d in retrieval_docs]
-                    serialized = msgspec.json.encode(docs_dicts)
-                    compressed_payload = lz4.frame.compress(serialized)
-                    # Clear docs to save bandwidth
-                    retrieval_docs = []
-
-                return RetrievalResponseItem(
-                    request_id=req.request_id,
-                    docs=retrieval_docs,
-                    compressed_docs=compressed_payload,
-                )
-
-            tasks = []
-            for idx, req in enumerate(batch.requests):
-                docs = documents_batch[idx]
-                scores = distances_batch[idx]
-                tasks.append((idx, req, docs, scores))
-
-            if reranker and len(tasks) > 1:
-                max_workers = min(settings.cpu_worker_threads, len(tasks))
+            # Step 4: Build Response Items with optional reranking
+            if reranker and batch_size > 1:
+                max_workers = min(settings.cpu_worker_threads, batch_size)
                 with ThreadPoolExecutor(max_workers=max_workers) as executor:
-                    response_items = list(executor.map(process_single_item, tasks))
+                    response_items = list(
+                        executor.map(
+                            lambda args: self._build_response_item(
+                                args[0], args[1], args[2], reranker
+                            ),
+                            zip(batch.requests, documents_batch, distances_batch, strict=False),
+                        )
+                    )
             else:
-                response_items = [process_single_item(t) for t in tasks]
+                response_items = [
+                    self._build_response_item(req, docs, scores, reranker)
+                    for req, docs, scores in zip(
+                        batch.requests, documents_batch, distances_batch, strict=False
+                    )
+                ]
 
             return response_items
 
 
-# Global executor instance
-_executor: RetrievalExecutor | None = None
+class _ExecutorContainer:
+    """Container for singleton executor instance to avoid global statement."""
+
+    instance: RetrievalExecutor | None = None
+
+
+_executor_container = _ExecutorContainer()
 
 
 async def start_retrieval_executor(registry: ComponentRegistry) -> None:
     """Start the retrieval executor."""
-    global _executor
-    if _executor is None:
-        _executor = RetrievalExecutor(registry)
-        await _executor.start()
+    if _executor_container.instance is None:
+        _executor_container.instance = RetrievalExecutor(registry)
+        await _executor_container.instance.start()
         logger.info("RetrievalExecutor started")
 
 
 async def stop_retrieval_executor() -> None:
     """Stop the retrieval executor."""
-    global _executor
-    if _executor:
-        await _executor.stop()
-        _executor = None
+    if _executor_container.instance:
+        await _executor_container.instance.stop()
+        _executor_container.instance = None
         logger.info("RetrievalExecutor stopped")
 
 
 async def get_executor(request: Request) -> RetrievalExecutor:
     """Get the retrieval executor instance."""
-    global _executor
-    if _executor is None:
+    if _executor_container.instance is None:
         # Fallback for tests or if not started via lifecycle
         registry = get_registry(request)
         await start_retrieval_executor(registry)
 
-    if _executor is None:
-        raise RuntimeError("Failed to initialize RetrievalExecutor")
+    if _executor_container.instance is None:
+        msg = "Failed to initialize RetrievalExecutor"
+        raise RuntimeError(msg)
 
-    return _executor
+    return _executor_container.instance
 
 
 @router.post("/clear_cache")

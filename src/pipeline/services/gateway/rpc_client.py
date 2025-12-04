@@ -6,10 +6,10 @@ Uses httpx.AsyncClient with Tenacity retry policies for robust communication.
 
 import io
 import logging
-from typing import Any
+from typing import Any, cast
 
 import httpx
-import lz4.frame  # type: ignore
+import lz4.frame  # type: ignore[import-untyped]
 import msgspec
 import orjson
 from tenacity import (
@@ -23,6 +23,7 @@ import zstandard as zstd
 
 from pipeline.config import get_settings
 from pipeline.telemetry import metrics
+
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -183,10 +184,11 @@ class RPCClient:
         except httpx.HTTPStatusError as e:
             # Don't retry 4xx errors
             if 400 <= e.response.status_code < 500:
-                logger.error("RPC client error: %s returned %d", url, e.response.status_code)
-                raise RPCError(f"Client error {e.response.status_code} from {url}") from e
+                logger.exception("RPC client error: %s returned %d", url, e.response.status_code)
+                msg = f"Client error {e.response.status_code} from {url}"
+                raise RPCError(msg) from e
             # Re-raise 5xx to trigger retry
-            raise e
+            raise
 
         logger.debug("RPC POST %s succeeded", url)
 
@@ -205,7 +207,8 @@ class RPCClient:
             content = lz4.frame.decompress(content)
 
         # Decode response
-        return orjson.loads(content)
+        result: dict[str, Any] = orjson.loads(content)
+        return result
 
     async def post(
         self,
@@ -233,26 +236,31 @@ class RPCClient:
             return await self._post_with_retry(endpoint, payload)
 
         except httpx.TimeoutException as e:
-            logger.error("RPC timeout for %s after %.1fs", url, self.timeout_seconds)
-            raise RPCTimeoutError(f"Request to {url} timed out") from e
+            logger.exception("RPC timeout for %s after %.1fs", url, self.timeout_seconds)
+            msg = f"Request to {url} timed out"
+            raise RPCTimeoutError(msg) from e
 
         except httpx.HTTPStatusError as e:
             # This catches 5xx errors that exhausted retries
             status_code = e.response.status_code
             logger.warning("RPC service error: %s returned %d", url, status_code, exc_info=True)
-            raise RPCServiceError(f"Service error {status_code} from {url}") from e
+            msg = f"Service error {status_code} from {url}"
+            raise RPCServiceError(msg) from e
 
         except httpx.ConnectError as e:
             logger.exception("RPC connection error for %s", url)
-            raise RPCError(f"Failed to connect to {url}") from e
+            msg = f"Failed to connect to {url}"
+            raise RPCError(msg) from e
 
         except RetryError as e:
             logger.exception("RPC exhausted retries for %s", url)
-            raise RPCError(f"Exhausted retries for {url}") from e
+            msg = f"Exhausted retries for {url}"
+            raise RPCError(msg) from e
 
         except Exception as e:
             logger.exception("Unexpected RPC error for %s", url)
-            raise RPCError(f"Unexpected error calling {url}: {e}") from e
+            msg = f"Unexpected error calling {url}: {e}"
+            raise RPCError(msg) from e
 
     async def get(self, endpoint: str) -> dict[str, Any]:
         """
@@ -277,20 +285,24 @@ class RPCClient:
 
             result = response.json()
             logger.debug("RPC GET %s succeeded", url)
-            return result
 
         except httpx.TimeoutException as e:
-            logger.error("RPC timeout for %s", url)
-            raise RPCTimeoutError(f"Request to {url} timed out") from e
+            logger.exception("RPC timeout for %s", url)
+            msg = f"Request to {url} timed out"
+            raise RPCTimeoutError(msg) from e
 
         except httpx.HTTPStatusError as e:
             status_code = e.response.status_code
-            logger.error("RPC error: %s returned %d", url, status_code)
-            raise RPCError(f"HTTP {status_code} from {url}") from e
+            logger.exception("RPC error: %s returned %d", url, status_code)
+            msg = f"HTTP {status_code} from {url}"
+            raise RPCError(msg) from e
 
         except Exception as e:
             logger.exception("Unexpected RPC error for %s", url)
-            raise RPCError(f"Unexpected error calling {url}: {e}") from e
+            msg = f"Unexpected error calling {url}: {e}"
+            raise RPCError(msg) from e
+        else:
+            return cast("dict[str, Any]", result)
 
     async def clear_cache(self, endpoint: str = "/clear_cache") -> bool:
         """
@@ -305,7 +317,8 @@ class RPCClient:
         try:
             response = await self._client.post(endpoint)
             response.raise_for_status()
-            return True
         except Exception as e:
             logger.warning("Failed to clear cache on %s%s: %s", self.base_url, endpoint, e)
             return False
+        else:
+            return True

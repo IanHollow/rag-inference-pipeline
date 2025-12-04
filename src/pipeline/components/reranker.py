@@ -10,14 +10,17 @@ import time
 from typing import TYPE_CHECKING, cast
 
 import torch
-from transformers import AutoModelForSequenceClassification, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoModelForSequenceClassification, AutoTokenizer
+
 
 if TYPE_CHECKING:
+    from transformers import PreTrainedTokenizerBase
     from transformers.modeling_utils import PreTrainedModel
 
 from pipeline.config import PipelineSettings
 
 from .schemas import Document, RerankedDocument
+
 
 logger = logging.getLogger(__name__)
 
@@ -160,8 +163,8 @@ class Reranker:
             elapsed = time.time() - start_time
             logger.info("Reranker model loaded in %.2f seconds", elapsed)
 
-        except Exception as e:
-            logger.exception("Failed to load reranker model: %s", e)
+        except Exception:
+            logger.exception("Failed to load reranker model")
             raise
 
     def unload(self) -> None:

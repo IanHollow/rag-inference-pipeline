@@ -8,6 +8,7 @@ from typing import ClassVar, TypeVar
 
 from pipeline.config import PipelineSettings
 
+
 logger = logging.getLogger(__name__)
 
 T = TypeVar("T")
@@ -55,7 +56,6 @@ class ServiceExecutorFactory:
         Run a CPU-bound function in the service's thread pool.
         """
         executor = cls.get_executor(service_name)
-        # TODO: Add queue depth tracking here if needed
         return await loop.run_in_executor(executor, partial(func, *args))
 
     @classmethod

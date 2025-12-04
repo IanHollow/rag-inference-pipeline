@@ -13,6 +13,7 @@ from pydantic import Field, field_validator
 from pipeline.base_schemas import BaseJSONModel
 from pipeline.components.schemas import Document, DocumentStruct, RerankedDocument
 
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -40,13 +41,10 @@ class GenerationRequestItem(BaseJSONModel):
     @classmethod
     def decode_base64(cls, v: str | bytes | None) -> bytes | None:
         if isinstance(v, str):
-            # logger.debug(f"DEBUG: Decoding base64 string of length {len(v)}")
             try:
-                decoded = base64.b64decode(v)
-                # logger.debug(f"DEBUG: Decoded bytes length: {len(decoded)}")
-                return decoded
-            except Exception as e:
-                logger.error("Base64 decode failed: %s", e)
+                return base64.b64decode(v)
+            except Exception:
+                logger.exception("Base64 decode failed")
                 raise
         return v
 

@@ -2,6 +2,7 @@ import asyncio
 from collections.abc import Callable
 import logging
 
+
 logger = logging.getLogger(__name__)
 
 
@@ -19,9 +20,11 @@ class ComponentRegistry:
     def register_alias(self, alias: str, name: str) -> None:
         """Register an alias for a component."""
         if alias in self._components:
-            raise ValueError(f"Alias '{alias}' conflicts with existing component name")
+            msg = f"Alias '{alias}' conflicts with existing component name"
+            raise ValueError(msg)
         if alias in self._aliases and self._aliases[alias] != name:
-            raise ValueError(f"Alias '{alias}' already registered to '{self._aliases[alias]}'")
+            msg = f"Alias '{alias}' already registered to '{self._aliases[alias]}'"
+            raise ValueError(msg)
 
         self._aliases[alias] = name
 
@@ -39,7 +42,8 @@ class ComponentRegistry:
         Executes load_hook immediately.
         """
         if name in self._components:
-            raise ValueError(f"Component {name} already registered")
+            msg = f"Component {name} already registered"
+            raise ValueError(msg)
 
         self._components[name] = component
         self._lifecycle_hooks[name] = {
@@ -55,8 +59,8 @@ class ComponentRegistry:
             try:
                 logger.info("Loading component: %s", name)
                 load_hook()
-            except Exception as e:
-                logger.error("Failed to load component %s: %s", name, e)
+            except Exception:
+                logger.exception("Failed to load component %s", name)
                 # Cleanup if load fails?
                 self.unregister(name)
                 raise
@@ -90,8 +94,8 @@ class ComponentRegistry:
                         await hook()
                     else:
                         hook()
-                except Exception as e:
-                    logger.error("Failed to start component %s: %s", name, e)
+                except Exception:
+                    logger.exception("Failed to start component %s", name)
                     raise
 
     async def stop_all(self) -> None:
@@ -106,8 +110,8 @@ class ComponentRegistry:
                         await hook()
                     else:
                         hook()
-                except Exception as e:
-                    logger.error("Failed to stop component %s: %s", name, e)
+                except Exception:
+                    logger.exception("Failed to stop component %s", name)
 
     def unload_all(self) -> None:
         """Run unload hooks for all components in reverse order."""
@@ -118,5 +122,5 @@ class ComponentRegistry:
                 try:
                     logger.info("Unloading component: %s", name)
                     hook()
-                except Exception as e:
-                    logger.error("Failed to unload component %s: %s", name, e)
+                except Exception:
+                    logger.exception("Failed to unload component %s", name)

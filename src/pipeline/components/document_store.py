@@ -8,10 +8,15 @@ import logging
 from pathlib import Path
 import sqlite3
 import threading
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pipeline.config import PipelineSettings
 from pipeline.utils.cache import CompressedLRUCache
+
+
+if TYPE_CHECKING:
+    from sqlite3 import Connection
+
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +111,8 @@ class DocumentStore:
 
         # Validate database exists
         if not self.db_path.exists():
-            raise FileNotFoundError(f"Document database not found at {self.db_path}")
+            msg = f"Document database not found at {self.db_path}"
+            raise FileNotFoundError(msg)
 
         # Initialize cache
         self.cache = CompressedLRUCache[int, dict[str, str | int]](
@@ -141,7 +147,7 @@ class DocumentStore:
             self._local.conn = conn
             # Enable row factory for dict-like access
             self._local.conn.row_factory = sqlite3.Row
-        return self._local.conn
+        return cast("Connection", self._local.conn)
 
     def _prepare_doc_id_temp_table(self, cursor: sqlite3.Cursor) -> None:
         """
@@ -258,17 +264,16 @@ class DocumentStore:
                 )
 
             except sqlite3.Error as e:
-                logger.exception("SQLite error fetching documents: %s", e)
-                raise RuntimeError(f"Failed to fetch documents: {e}") from e
+                logger.exception("SQLite error fetching documents")
+                msg = f"Failed to fetch documents: {e}"
+                raise RuntimeError(msg) from e
 
         # Combine and order
         all_docs_map = cached_docs
         for doc in fetched_docs:
             all_docs_map[doc.doc_id] = doc
 
-        ordered_docs = [all_docs_map[doc_id] for doc_id in doc_ids if doc_id in all_docs_map]
-
-        return ordered_docs
+        return [all_docs_map[doc_id] for doc_id in doc_ids if doc_id in all_docs_map]
 
     def fetch_documents_batch(
         self, doc_ids_batch: list[list[int]], truncate_length: int | None = None

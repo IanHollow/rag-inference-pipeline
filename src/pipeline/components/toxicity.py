@@ -7,11 +7,17 @@ Manages unitary/toxic-bert for toxicity/safety filtering.
 import gc
 import logging
 import time
+from typing import TYPE_CHECKING
 
 import torch
-from transformers import TextClassificationPipeline, pipeline as hf_pipeline
+from transformers import pipeline as hf_pipeline
 
 from pipeline.config import PipelineSettings
+
+
+if TYPE_CHECKING:
+    from transformers import TextClassificationPipeline
+
 
 logger = logging.getLogger(__name__)
 
@@ -90,8 +96,8 @@ class ToxicityFilter:
             elapsed = time.time() - start_time
             logger.info("Toxicity model loaded in %.2f seconds", elapsed)
 
-        except Exception as e:
-            logger.exception("Failed to load toxicity model: %s", e)
+        except Exception:
+            logger.exception("Failed to load toxicity model")
             raise
 
     def unload(self) -> None:
@@ -173,11 +179,7 @@ class ToxicityFilter:
         results = self.pipeline(truncated_texts)
 
         # Check all results against threshold
-        toxicity_flags = [
-            "true" if result["score"] > self.threshold else "false" for result in results
-        ]
-
-        return toxicity_flags
+        return ["true" if result["score"] > self.threshold else "false" for result in results]
 
     def check(self, text: str) -> tuple[bool, float]:
         """

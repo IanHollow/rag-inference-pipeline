@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, cast
 from unittest.mock import MagicMock, patch
 
 from fastapi.testclient import TestClient
-import lz4.frame  # type: ignore
+import lz4.frame  # type: ignore[import-untyped]
 import msgspec
 import pytest
 import torch
@@ -27,6 +27,7 @@ from pipeline.services.generation.schemas import (
     GenerationResponse,
     RerankedDocument,
 )
+
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
@@ -479,7 +480,7 @@ class TestGenerationService:
         from pipeline.services.generation.api import router
 
         # Reset global executor
-        api._executor = None
+        api._executor_container.instance = None
 
         app = FastAPI()
         app.include_router(router, prefix="/generate")

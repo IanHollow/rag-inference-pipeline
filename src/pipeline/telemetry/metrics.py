@@ -10,6 +10,7 @@ from typing import Any, TypeVar, cast
 
 from prometheus_client import REGISTRY, Counter, Gauge, Histogram
 
+
 MetricType = Counter | Gauge | Histogram
 T = TypeVar("T", bound=MetricType)
 

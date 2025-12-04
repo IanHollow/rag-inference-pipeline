@@ -36,6 +36,7 @@ from .orchestrator import Orchestrator
 from .rpc_client import RPCError, RPCTimeoutError
 from .schemas import QueryRequest, QueryResponse
 
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 tracer = trace.get_tracer(__name__)
@@ -58,7 +59,7 @@ def _record_memory_usage() -> None:
 
 @router.post("/query")
 async def query(
-    request: Request,
+    _request: Request,
     query_request: QueryRequest,
     orchestrator: Annotated[Orchestrator, Depends(get_component("orchestrator"))],
     embedding_generator: Annotated[
@@ -81,6 +82,27 @@ async def query(
     if not orchestrator:
         raise HTTPException(status_code=503, detail="Orchestrator not initialized")
 
+    # Validate request before processing
+    if not query_request.request_id:
+        gateway_error_counter.labels(error_type="validation").inc()
+        pipeline_error_counter.labels(
+            run_id=settings.profiling_run_id,
+            node=str(settings.node_number),
+            service="gateway",
+            error_type="validation",
+        ).inc()
+        raise HTTPException(status_code=400, detail="request_id is required")
+
+    if not query_request.query:
+        gateway_error_counter.labels(error_type="validation").inc()
+        pipeline_error_counter.labels(
+            run_id=settings.profiling_run_id,
+            node=str(settings.node_number),
+            service="gateway",
+            error_type="validation",
+        ).inc()
+        raise HTTPException(status_code=400, detail="Query is required")
+
     # Inject components if available
     orchestrator.set_components(
         embedding_generator=embedding_generator,
@@ -90,27 +112,6 @@ async def query(
     )
 
     try:
-        # Validate request
-        if not query_request.request_id:
-            gateway_error_counter.labels(error_type="validation").inc()
-            pipeline_error_counter.labels(
-                run_id=settings.profiling_run_id,
-                node=str(settings.node_number),
-                service="gateway",
-                error_type="validation",
-            ).inc()
-            raise HTTPException(status_code=400, detail="request_id is required")
-
-        if not query_request.query:
-            gateway_error_counter.labels(error_type="validation").inc()
-            pipeline_error_counter.labels(
-                run_id=settings.profiling_run_id,
-                node=str(settings.node_number),
-                service="gateway",
-                error_type="validation",
-            ).inc()
-            raise HTTPException(status_code=400, detail="Query is required")
-
         gateway_request_counter.labels(status="received").inc()
         pipeline_request_counter.labels(
             run_id=settings.profiling_run_id,
@@ -141,10 +142,8 @@ async def query(
             status="success",
         ).inc()
 
-        return response
-
     except (RPCError, RPCTimeoutError) as e:
-        logger.error("RPC error processing query %s: %s", query_request.request_id, e)
+        logger.exception("RPC error processing query %s", query_request.request_id)
         gateway_error_counter.labels(error_type="rpc_error").inc()
         pipeline_error_counter.labels(
             run_id=settings.profiling_run_id,
@@ -155,7 +154,7 @@ async def query(
         raise HTTPException(status_code=503, detail=f"Service unavailable: {e!s}") from e
 
     except ValidationError as e:
-        logger.error("Validation error: %s", e)
+        logger.exception("Validation error")
         gateway_error_counter.labels(error_type="validation").inc()
         pipeline_error_counter.labels(
             run_id=settings.profiling_run_id,
@@ -166,7 +165,7 @@ async def query(
         raise HTTPException(status_code=400, detail=str(e)) from e
 
     except Exception as e:
-        logger.exception("Unexpected error processing query %s: %s", query_request.request_id, e)
+        logger.exception("Unexpected error processing query %s", query_request.request_id)
         gateway_error_counter.labels(error_type="unknown").inc()
         pipeline_error_counter.labels(
             run_id=settings.profiling_run_id,
@@ -175,6 +174,8 @@ async def query(
             error_type="unknown",
         ).inc()
         raise HTTPException(status_code=500, detail="Internal server error") from e
+    else:
+        return response
 
 
 @router.post("/clear_cache")

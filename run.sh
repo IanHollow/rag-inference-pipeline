@@ -9,6 +9,13 @@ set -euo pipefail
 export OMP_NUM_THREADS=1
 export MKL_NUM_THREADS=1
 
+# Disable tokenizer parallelism to avoid fork deadlocks and semaphore leaks
+export TOKENIZERS_PARALLELISM=false
+
+# Allow duplicate OpenMP libraries (PyTorch and FAISS both link their own libomp)
+# Without this, the process will crash with "OMP: Error #15" on macOS
+export KMP_DUPLICATE_LIB_OK=TRUE
+
 # Check if profiling is enabled
 if [[ ${PROFILE_WITH_SCALENE:-0} == "1"   ]]; then
 	# Ensure required environment variables are set

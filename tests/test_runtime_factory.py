@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 from fastapi.testclient import TestClient
 import numpy as np
+import pytest
 
 from pipeline.config import PipelineSettings
 from pipeline.config.profile_schema import ComponentConfig, ProfileFile, RouteConfig
@@ -19,8 +20,8 @@ class TestRuntimeFactory(unittest.TestCase):
         from pipeline.services.generation import api as generation_api
         from pipeline.services.retrieval import api as retrieval_api
 
-        retrieval_api._executor = None
-        generation_api._executor = None
+        retrieval_api._executor_container.instance = None
+        generation_api._executor_container.instance = None
 
     @patch("pipeline.runtime_factory.create_component")
     @patch("pipeline.runtime_factory.load_role_profile")
@@ -54,13 +55,13 @@ class TestRuntimeFactory(unittest.TestCase):
         # Verify routes
         routes = [getattr(r, "path", "") for r in app.routes]
         # The retrieval router has / endpoint, so mounted at /custom_retrieve it becomes /custom_retrieve
-        self.assertIn("/custom_retrieve", routes)
+        assert "/custom_retrieve" in routes
 
         # Verify aliases
-        self.assertEqual(app.state.component_aliases["embedding_generator"], "my_embedding")
+        assert app.state.component_aliases["embedding_generator"] == "my_embedding"
 
         # Verify registry
-        self.assertIn("my_embedding", app.state.registry.components)
+        assert "my_embedding" in app.state.registry.components
 
     @patch("pipeline.runtime_factory.yaml.safe_load")
     @patch(
@@ -70,7 +71,7 @@ class TestRuntimeFactory(unittest.TestCase):
     )
     @patch("pipeline.runtime_factory.Path.exists")
     def test_load_role_profile_from_yaml(
-        self, mock_exists: MagicMock, mock_open: MagicMock, mock_yaml: MagicMock
+        self, mock_exists: MagicMock, _mock_open: MagicMock, mock_yaml: MagicMock
     ) -> None:
         mock_exists.return_value = True
         mock_yaml.return_value = {"name": "test_profile", "components": [], "routes": []}
@@ -78,7 +79,7 @@ class TestRuntimeFactory(unittest.TestCase):
         self.settings.pipeline_role_profile = "test_profile"
         profile = load_role_profile(self.settings)
 
-        self.assertEqual(profile.name, "test_profile")
+        assert profile.name == "test_profile"
 
     @patch("pipeline.runtime_factory.create_component")
     @patch("pipeline.runtime_factory.load_role_profile")
@@ -110,7 +111,7 @@ class TestRuntimeFactory(unittest.TestCase):
 
     def test_profile_validation_aliases(self) -> None:
         # Test that invalid alias raises ValueError
-        with self.assertRaises(ValueError) as cm:
+        with pytest.raises(ValueError, match="points to unknown component") as cm:
             ProfileFile(
                 name="invalid_alias",
                 components=[ComponentConfig(name="comp1", type="type1")],
@@ -118,7 +119,7 @@ class TestRuntimeFactory(unittest.TestCase):
                     RouteConfig(target="gateway", component_aliases={"dep1": "non_existent_comp"})
                 ],
             )
-        self.assertIn("points to unknown component", str(cm.exception))
+        assert "points to unknown component" in str(cm.value)
 
     @patch("pipeline.runtime_factory.create_component")
     @patch("pipeline.runtime_factory.load_role_profile")
@@ -163,12 +164,12 @@ class TestRuntimeFactory(unittest.TestCase):
         ]
 
         # Configure create_component to return appropriate mocks
-        def side_effect(ctype: object, settings: object, config: object) -> MagicMock:
-            if ctype == "embedding_generator" or ctype == ComponentType.EMBEDDING:
+        def side_effect(ctype: object, _settings: object, _config: object) -> MagicMock:
+            if ctype in ("embedding_generator", ComponentType.EMBEDDING):
                 return mock_emb
-            if ctype == "faiss_store" or ctype == ComponentType.FAISS:
+            if ctype in ("faiss_store", ComponentType.FAISS):
                 return mock_faiss
-            if ctype == "document_store" or ctype == ComponentType.DOCUMENT_STORE:
+            if ctype in ("document_store", ComponentType.DOCUMENT_STORE):
                 return mock_docs
             return MagicMock()
 
@@ -187,11 +188,11 @@ class TestRuntimeFactory(unittest.TestCase):
             # Should not be 500 (Internal Server Error) due to missing dependency
             # It might be 422 (Validation Error) or 200 depending on mocks,
             # but definitely not 500 "Component registry not initialized" or similar
-            self.assertNotEqual(response.status_code, 500)
+            assert response.status_code != 500
 
             # Verify aliases were registered
-            self.assertEqual(app.state.component_aliases["embedding_generator"], "custom_embedding")
-            self.assertEqual(app.state.component_aliases["faiss_store"], "custom_faiss")
+            assert app.state.component_aliases["embedding_generator"] == "custom_embedding"
+            assert app.state.component_aliases["faiss_store"] == "custom_faiss"
 
     @patch("pipeline.runtime_factory.create_component")
     @patch("pipeline.runtime_factory.load_role_profile")
@@ -232,8 +233,8 @@ class TestRuntimeFactory(unittest.TestCase):
         app = create_app_from_profile(self.settings)
 
         # 4. Verify alias registration
-        self.assertEqual(app.state.component_aliases["embedding_generator"], "custom_embedder")
-        self.assertIn("custom_embedder", app.state.registry.components)
+        assert app.state.component_aliases["embedding_generator"] == "custom_embedder"
+        assert "custom_embedder" in app.state.registry.components
 
         # 5. Simulate request to verify dependency injection
         # We need to mock the other dependencies of retrieval service too,
@@ -281,7 +282,7 @@ class TestRuntimeFactory(unittest.TestCase):
             [MagicMock(doc_id=1, title="t", content="c", category="cat")]
         ]
 
-        def create_side_effect(ctype: object, settings: object, config: object) -> MagicMock:
+        def create_side_effect(ctype: object, _settings: object, _config: object) -> MagicMock:
             mapping = {
                 "embedding_generator": mock_embedder,
                 "faiss_store": mock_faiss,
@@ -301,7 +302,7 @@ class TestRuntimeFactory(unittest.TestCase):
             )
 
             # Check success
-            self.assertEqual(response.status_code, 200)
+            assert response.status_code == 200
 
             # Verify our custom named component was used
             mock_embedder.encode.assert_called_once()
@@ -363,7 +364,7 @@ class TestRuntimeFactory(unittest.TestCase):
                 [MagicMock(doc_id=1, title="t", content="c", category="cat")]
             ]
 
-            def create_side_effect(ctype: object, settings: object, config: object) -> MagicMock:
+            def create_side_effect(ctype: object, _settings: object, _config: object) -> MagicMock:
                 # ctype can be string or Enum. Convert to string for comparison.
                 type_str = ctype.value if hasattr(ctype, "value") else str(ctype)
 
@@ -380,7 +381,7 @@ class TestRuntimeFactory(unittest.TestCase):
             app = create_app_from_profile(self.settings)
 
             # Verify aliases in state
-            self.assertEqual(app.state.component_aliases["embedding_generator"], "yaml_embedder")
+            assert app.state.component_aliases["embedding_generator"] == "yaml_embedder"
 
             # Hit the endpoint
             with TestClient(app) as client:
@@ -392,7 +393,7 @@ class TestRuntimeFactory(unittest.TestCase):
                     },
                 )
 
-                self.assertEqual(response.status_code, 200)
+                assert response.status_code == 200
                 mock_embedder.encode.assert_called()
 
         finally:

@@ -12,11 +12,12 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import lz4.frame  # type: ignore
+import lz4.frame  # type: ignore[import-untyped]
 import pytest
 import zstandard as zstd
 
 from pipeline.middleware import CompressionMiddleware
+
 
 # Type aliases for ASGI
 Scope = MutableMapping[str, Any]
@@ -208,7 +209,7 @@ class TestResponseCompression:
             sent_messages.append(dict(message))
 
         # Create mock app that sends a response
-        async def mock_app(scope: Scope, receive: Receive, send: Send) -> None:
+        async def mock_app(_scope: Scope, _receive: Receive, send: Send) -> None:
             await send(
                 {"type": "http.response.start", "headers": [(b"content-type", b"application/json")]}
             )
@@ -262,7 +263,7 @@ class TestResponseCompression:
             sent_messages.append(dict(message))
 
         # Create mock app that sends a response
-        async def mock_app(scope: Scope, receive: Receive, send: Send) -> None:
+        async def mock_app(_scope: Scope, _receive: Receive, send: Send) -> None:
             await send(
                 {"type": "http.response.start", "headers": [(b"content-type", b"application/json")]}
             )
@@ -303,7 +304,7 @@ class TestResponseCompression:
             sent_messages.append(dict(message))
 
         # Create mock app that sends a response
-        async def mock_app(scope: Scope, receive: Receive, send: Send) -> None:
+        async def mock_app(_scope: Scope, _receive: Receive, send: Send) -> None:
             await send(
                 {"type": "http.response.start", "headers": [(b"content-type", b"application/json")]}
             )
@@ -346,7 +347,7 @@ class TestResponseCompression:
             sent_messages.append(dict(message))
 
         # Create mock app
-        async def mock_app(scope: Scope, receive: Receive, send: Send) -> None:
+        async def mock_app(_scope: Scope, _receive: Receive, send: Send) -> None:
             await send({"type": "http.response.start", "headers": []})
             await send({"type": "http.response.body", "body": b"test"})
 

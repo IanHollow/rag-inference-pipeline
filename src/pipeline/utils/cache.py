@@ -3,11 +3,12 @@ import logging
 import time
 from typing import Generic, TypeVar
 
-import lz4.frame  # type: ignore
+import lz4.frame  # type: ignore[import-untyped]
 import orjson
 
 from pipeline.config import get_settings
 from pipeline.telemetry import metrics
+
 
 logger = logging.getLogger(__name__)
 
@@ -102,9 +103,11 @@ class CompressedLRUCache(LRUCache[K, V]):
             return None
         # orjson.loads returns on Exception for malformed input, no need to further catch unless you want to catch MemoryError
         try:
-            return orjson.loads(serialized)
+            result: V | None = orjson.loads(serialized)
         except Exception:
             return None
+        else:
+            return result
 
     def put(self, key: K, value: V) -> None:
         try:

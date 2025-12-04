@@ -13,9 +13,36 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from pipeline.enums import NodeRole, derive_node_role
 
 
+def _is_local_dev_mode() -> bool:
+    """
+    Detect if running in local development mode (multiple nodes on single machine).
+    """
+    if os.environ.get("LOCAL_DEV_MODE", "").lower() in ("true", "1", "yes"):
+        return True
+
+    # Check if all nodes are on localhost
+    node_ips = [
+        os.environ.get("NODE_0_IP", "localhost:8000"),
+        os.environ.get("NODE_1_IP", "localhost:8001"),
+        os.environ.get("NODE_2_IP", "localhost:8002"),
+    ]
+    return all("localhost" in ip or "127.0.0.1" in ip for ip in node_ips)
+
+
 def _default_cpu_threads() -> int:
-    """Default to min(16, cpu_count) to avoid oversubscription on large nodes."""
+    """
+    Calculate default CPU threads based on environment.
+    """
     count = os.cpu_count() or 8
+    total_nodes = int(os.environ.get("TOTAL_NODES", "3"))
+
+    if _is_local_dev_mode() and total_nodes > 1:
+        # In local mode, divide cores among nodes
+        # Leave 1-2 cores for system overhead
+        available_cores = max(1, count - 2)
+        return max(1, available_cores // total_nodes)
+    # On real cluster, each node has its own cores
+    # Use up to 16 threads (matches target Xeon Gold 6242)
     return min(16, count)
 
 
@@ -29,6 +56,13 @@ class PipelineSettings(BaseSettings):
         env_file_encoding="utf-8",
         case_sensitive=True,
         extra="ignore",
+    )
+
+    # === Local Development Mode ===
+    local_dev_mode: bool = Field(
+        default_factory=_is_local_dev_mode,
+        alias="LOCAL_DEV_MODE",
+        description="Enable local development mode (multiple nodes on single machine)",
     )
 
     # === Required Node Configuration ===
@@ -401,7 +435,8 @@ class PipelineSettings(BaseSettings):
     def validate_total_nodes(cls, v: int) -> int:
         """Ensure total_nodes is exactly 3 (per project spec)."""
         if v != 3:
-            raise ValueError(f"TOTAL_NODES must be 3 (got {v}).")
+            msg = f"TOTAL_NODES must be 3 (got {v})."
+            raise ValueError(msg)
         return v
 
     @field_validator("node_number")
@@ -409,7 +444,8 @@ class PipelineSettings(BaseSettings):
     def validate_node_number(cls, v: int) -> int:
         """Ensure node_number is 0, 1, or 2."""
         if v not in {0, 1, 2}:
-            raise ValueError(f"NODE_NUMBER must be 0, 1, or 2 (got {v})")
+            msg = f"NODE_NUMBER must be 0, 1, or 2 (got {v})"
+            raise ValueError(msg)
         return v
 
     @field_validator("log_level")
@@ -419,12 +455,19 @@ class PipelineSettings(BaseSettings):
         valid_levels = {"DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"}
         v_upper = v.upper()
         if v_upper not in valid_levels:
-            raise ValueError(f"log_level must be one of {valid_levels} (got {v})")
+            msg = f"log_level must be one of {valid_levels} (got {v})"
+            raise ValueError(msg)
         return v_upper
 
 
 # Global settings instance
-_settings: PipelineSettings | None = None
+class _SettingsContainer:
+    """Container for singleton settings instance to avoid global statement."""
+
+    instance: PipelineSettings | None = None
+
+
+_settings_container = _SettingsContainer()
 
 
 def get_settings() -> PipelineSettings:
@@ -436,7 +479,6 @@ def get_settings() -> PipelineSettings:
     Returns:
         PipelineSettings: The global configuration instance
     """
-    global _settings
-    if _settings is None:
-        _settings = PipelineSettings()
-    return _settings
+    if _settings_container.instance is None:
+        _settings_container.instance = PipelineSettings()
+    return _settings_container.instance

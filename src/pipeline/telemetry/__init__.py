@@ -27,6 +27,7 @@ from .profiling import (
 )
 from .tracing import instrument_fastapi_app, setup_tracing
 
+
 __all__ = [
     "ProfileResult",
     "ResourceSnapshot",

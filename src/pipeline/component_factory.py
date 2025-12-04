@@ -12,43 +12,46 @@ from .config import PipelineSettings
 from .enums import ComponentType
 from .services.gateway.orchestrator import Orchestrator
 
+
 # Type alias for component factory function
 ComponentFactory = Callable[[PipelineSettings, dict[str, Any]], Any]
 
 
 def create_embedding_generator(
-    settings: PipelineSettings, config: dict[str, Any]
+    settings: PipelineSettings, _config: dict[str, Any]
 ) -> EmbeddingGenerator:
     return EmbeddingGenerator(settings)
 
 
-def create_faiss_store(settings: PipelineSettings, config: dict[str, Any]) -> FAISSStore:
+def create_faiss_store(settings: PipelineSettings, _config: dict[str, Any]) -> FAISSStore:
     return FAISSStore(settings)
 
 
-def create_document_store(settings: PipelineSettings, config: dict[str, Any]) -> DocumentStore:
+def create_document_store(settings: PipelineSettings, _config: dict[str, Any]) -> DocumentStore:
     return DocumentStore(settings)
 
 
-def create_reranker(settings: PipelineSettings, config: dict[str, Any]) -> Reranker:
+def create_reranker(settings: PipelineSettings, _config: dict[str, Any]) -> Reranker:
     return Reranker(settings)
 
 
-def create_llm_generator(settings: PipelineSettings, config: dict[str, Any]) -> LLMGenerator:
+def create_llm_generator(settings: PipelineSettings, _config: dict[str, Any]) -> LLMGenerator:
     return LLMGenerator(settings)
 
 
 def create_sentiment_analyzer(
-    settings: PipelineSettings, config: dict[str, Any]
+    settings: PipelineSettings, _config: dict[str, Any]
 ) -> SentimentAnalyzer:
     return SentimentAnalyzer(settings)
 
 
-def create_toxicity_filter(settings: PipelineSettings, config: dict[str, Any]) -> ToxicityFilter:
+def create_toxicity_filter(settings: PipelineSettings, _config: dict[str, Any]) -> ToxicityFilter:
     return ToxicityFilter(settings)
 
 
-def create_gateway_orchestrator(settings: PipelineSettings, config: dict[str, Any]) -> Orchestrator:
+def create_gateway_orchestrator(
+    _settings: PipelineSettings, config: dict[str, Any]
+) -> Orchestrator:
     return Orchestrator(
         retrieval_url=config.get("retrieval_url"),
         generation_url=config.get("generation_url"),
@@ -96,5 +99,6 @@ def create_component(
             pass
 
     if not factory:
-        raise ValueError(f"Unknown component type: {component_type}")
+        msg = f"Unknown component type: {component_type}"
+        raise ValueError(msg)
     return factory(settings, config)

@@ -17,6 +17,7 @@ import psutil
 import requests
 import yaml
 
+
 REPO_ROOT = Path(__file__).parent.parent
 ARTIFACTS_DIR = REPO_ROOT / "artifacts" / "experiments"
 
@@ -29,9 +30,10 @@ def is_port_in_use(port: int) -> bool:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
         try:
             s.bind(("localhost", port))
-            return False
         except OSError:
             return True
+        else:
+            return False
 
 
 def _is_pipeline_process(proc: psutil.Process) -> bool:
@@ -126,15 +128,237 @@ def ensure_ports_available(ports: list[int], max_wait: int = 10) -> None:
 
     busy_ports = [p for p in ports if is_port_in_use(p)]
     if busy_ports:
-        raise RuntimeError(
+        msg = (
             f"Ports {busy_ports} are still in use after {max_wait}s. "
             "Please manually kill the processes using these ports."
         )
+        raise RuntimeError(msg)
 
 
 def load_manifest(path: str) -> dict[str, Any]:
     with Path(path).open() as f:
-        return yaml.safe_load(f)
+        result: dict[str, Any] = yaml.safe_load(f)
+        return result
+
+
+def _setup_node_environment(
+    node: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    manifest: dict[str, Any],
+    full_run_id: str,
+    skip_monitoring: bool,
+) -> dict[str, str]:
+    """Set up the environment variables for a pipeline node."""
+    node_num = node["number"]
+    total_nodes = len(nodes)
+    profile_path = node["profile"]
+    abs_profile_path = (REPO_ROOT / profile_path).resolve()
+
+    env = os.environ.copy()
+    env["NODE_NUMBER"] = str(node_num)
+    env["TOTAL_NODES"] = str(total_nodes)
+    env["ROLE_PROFILE_OVERRIDE_PATH"] = str(abs_profile_path)
+    env["PROFILING_RUN_ID"] = full_run_id
+
+    # Disable Prometheus/OTLP profiling when monitoring is skipped
+    if skip_monitoring:
+        env["ENABLE_PROFILING"] = "0"
+        env["ENABLE_TRACING"] = "0"
+
+    # Set NODE_*_IP for all nodes so they can communicate
+    # When all nodes are on localhost, enable local dev mode
+    all_localhost = True
+    for i in range(total_nodes):
+        ip_key = f"NODE_{i}_IP"
+        if ip_key not in env:
+            env[ip_key] = f"localhost:{8000 + i}"
+        if "localhost" not in env[ip_key] and "127.0.0.1" not in env[ip_key]:
+            all_localhost = False
+
+    # Enable local dev mode for single-machine testing
+    if all_localhost and "LOCAL_DEV_MODE" not in env:
+        env["LOCAL_DEV_MODE"] = "true"
+        # Calculate threads per node to avoid oversubscription
+        cpu_count = os.cpu_count() or 8
+        threads_per_node = max(1, (cpu_count - 2) // total_nodes)
+        if "CPU_INFERENCE_THREADS" not in env:
+            env["CPU_INFERENCE_THREADS"] = str(threads_per_node)
+        if "FAISS_THREADS" not in env:
+            env["FAISS_THREADS"] = str(threads_per_node)
+        if "CPU_WORKER_THREADS" not in env:
+            env["CPU_WORKER_THREADS"] = str(threads_per_node)
+
+    # Check for profiling configuration in manifest
+    profiling_config = manifest.get("profiling", {})
+    if profiling_config.get("enabled", False) or manifest.get("profile_with_scalene", False):
+        env["PROFILE_WITH_SCALENE"] = "1"
+        env["ENABLE_PROFILING"] = "0"
+        env["ENABLE_TRACING"] = "0"
+        if "env" in profiling_config:
+            for k, v in profiling_config["env"].items():
+                env[k] = str(v)
+
+    # Apply env overrides from node config
+    if "env" in node:
+        for k, v in node["env"].items():
+            env[k] = str(v)
+
+    return env
+
+
+def _start_pipeline_nodes(
+    nodes: list[dict[str, Any]],
+    manifest: dict[str, Any],
+    full_run_id: str,
+    skip_monitoring: bool,
+    output_dir: Path,
+) -> list[tuple[subprocess.Popen, Any]]:
+    """Start all pipeline nodes and return the list of processes with their log files."""
+    processes = []
+
+    for node in nodes:
+        node_num = node["number"]
+        profile_path = node["profile"]
+
+        env = _setup_node_environment(node, nodes, manifest, full_run_id, skip_monitoring)
+        log_file = (output_dir / f"node_{node_num}.log").open("w")
+
+        print(f"Starting Node {node_num} with profile {profile_path}...")
+        p = subprocess.Popen(
+            [str(REPO_ROOT / "run.sh")],
+            env=env,
+            stdout=log_file,
+            stderr=subprocess.STDOUT,
+            cwd=REPO_ROOT,
+            start_new_session=True,
+        )
+        processes.append((p, log_file))
+
+        # Add delay between starting nodes to avoid resource contention
+        # during model loading (especially for nodes with heavy ML models)
+        if node_num < len(nodes) - 1:
+            time.sleep(2)
+
+    return processes
+
+
+def _detect_batch_size(nodes: list[dict[str, Any]]) -> str:
+    """Detect the batch size from manifest or profile configuration."""
+    detected_batch_size = "32"  # Default in ProfileFile schema
+
+    # Check manifest env overrides
+    for node in nodes:
+        if "env" in node and "GATEWAY_BATCH_SIZE" in node["env"]:
+            return str(node["env"]["GATEWAY_BATCH_SIZE"])
+
+    # Check node 0 profile (assumed gateway)
+    for node in nodes:
+        if node["number"] == 0:
+            with contextlib.suppress(Exception):
+                p_path = (REPO_ROOT / node["profile"]).resolve()
+                with p_path.open() as f:
+                    p_data = yaml.safe_load(f)
+                    if "batch_size" in p_data:
+                        return str(p_data["batch_size"])
+            break
+
+    return detected_batch_size
+
+
+def _run_workload(
+    manifest: dict[str, Any],
+    nodes: list[dict[str, Any]],
+    full_run_id: str,
+    output_dir: Path,
+) -> None:
+    """Run the workload defined in the manifest."""
+    workload = manifest.get("workload", {})
+    requests_count = workload.get("requests", 10)
+    concurrency = workload.get("concurrency", 1)
+    rate_limit = workload.get("rate_limit", 0.1)
+
+    print(f"Running workload: {requests_count} requests (concurrency={concurrency})...")
+    profile_cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "profile_pipeline.py"),
+        "--requests",
+        str(requests_count),
+        "--concurrency",
+        str(concurrency),
+        "--rate-limit",
+        str(rate_limit),
+        "--no-interactive",
+        "--output-dir",
+        str(output_dir / "profile_data"),
+    ]
+
+    profile_env = os.environ.copy()
+    profile_env["PROFILING_RUN_ID"] = full_run_id
+    profile_env["GATEWAY_BATCH_SIZE"] = _detect_batch_size(nodes)
+
+    subprocess.run(profile_cmd, env=profile_env, check=True)
+
+
+def _capture_metrics(
+    full_run_id: str,
+    output_dir: Path,
+    experiment_start_time: float,
+) -> None:
+    """Capture Prometheus metrics for the experiment."""
+    print("Capturing metrics...")
+    end_time = time.time()
+    metrics_output = output_dir / "metrics.csv"
+
+    capture_cmd = [
+        sys.executable,
+        str(REPO_ROOT / "scripts" / "capture_metrics.py"),
+        "--run-id",
+        full_run_id,
+        "--start-time",
+        str(experiment_start_time),
+        "--end-time",
+        str(end_time),
+        "--output-file",
+        str(metrics_output),
+    ]
+    subprocess.run(capture_cmd, check=False)  # Don't fail if metrics fail
+
+
+def _cleanup_processes(
+    processes: list[tuple[subprocess.Popen, Any]],
+    output_dir: Path,
+    full_run_id: str,
+) -> None:
+    """Clean up all pipeline processes and copy artifacts."""
+    print("Tearing down nodes...")
+    for p, f in processes:
+        try:
+            os.killpg(os.getpgid(p.pid), signal.SIGTERM)
+            p.wait(timeout=15)
+        except Exception:
+            with contextlib.suppress(Exception):
+                os.killpg(os.getpgid(p.pid), signal.SIGKILL)
+        f.close()
+
+    # Final cleanup: ensure all pipeline processes are dead
+    remaining = get_pipeline_processes()
+    if remaining:
+        print(f"Cleaning up {len(remaining)} remaining pipeline process(es)...")
+        for proc in remaining:
+            with contextlib.suppress(Exception):
+                proc.kill()
+        psutil.wait_procs(remaining, timeout=5)
+
+    # Copy Scalene reports if they exist
+    scalene_src_dir = REPO_ROOT / "artifacts" / "scalene" / full_run_id
+    if scalene_src_dir.exists():
+        print(f"Copying Scalene reports from {scalene_src_dir}...")
+        scalene_dest_dir = output_dir / "scalene"
+        scalene_dest_dir.mkdir(exist_ok=True)
+        for item in scalene_src_dir.iterdir():
+            if item.is_file():
+                shutil.copy(item, scalene_dest_dir / item.name)
+        print(f"Scalene reports copied to {scalene_dest_dir}")
 
 
 def get_process_stats(child: psutil.Process) -> dict[str, Any] | None:
@@ -178,7 +402,8 @@ def wait_for_health(nodes: list[dict[str, Any]], timeout: int = 300) -> None:
 
     while len(ready_nodes) < len(nodes):
         if time.time() - start_time > timeout:
-            raise TimeoutError("Timed out waiting for nodes to be healthy")
+            msg = "Timed out waiting for nodes to be healthy"
+            raise TimeoutError(msg)
 
         for node in nodes:
             node_num = node["number"]
@@ -200,170 +425,37 @@ def wait_for_health(nodes: list[dict[str, Any]], timeout: int = 300) -> None:
 
 
 def run_experiment(
-    manifest_path: str, skip_monitoring: bool = False, reuse_env: bool = False
+    manifest_path: str, skip_monitoring: bool = False, _reuse_env: bool = False
 ) -> None:
     manifest = load_manifest(manifest_path)
     run_id = manifest.get("run_id", "unknown")
-    # Append timestamp to run_id to make it unique
     timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     full_run_id = f"{run_id}_{timestamp}"
 
     output_dir = ARTIFACTS_DIR / full_run_id
     output_dir.mkdir(parents=True, exist_ok=True)
-
-    # Copy manifest to output dir
     shutil.copy(manifest_path, output_dir / "manifest.yaml")
 
     print(f"Starting experiment: {full_run_id}")
     print(f"Output directory: {output_dir}")
 
-    # Clean up any existing pipeline processes from previous runs
     kill_existing_pipeline_processes()
 
-    # Determine which ports we need
     nodes = manifest["nodes"]
-    total_nodes = len(nodes)
     required_ports = [8000 + node["number"] for node in nodes]
-
-    # Ensure ports are available
     ensure_ports_available(required_ports)
 
     if not skip_monitoring:
         start_monitoring()
 
-    processes = []
-
+    processes: list[tuple[subprocess.Popen, Any]] = []
     experiment_start_time = time.time()
 
     try:
-        # Start Nodes
-        for node in nodes:
-            node_num = node["number"]
-            profile_path = node["profile"]
-
-            # Resolve profile path relative to repo root
-            abs_profile_path = (REPO_ROOT / profile_path).resolve()
-
-            env = os.environ.copy()
-            env["NODE_NUMBER"] = str(node_num)
-            env["TOTAL_NODES"] = str(total_nodes)
-            env["ROLE_PROFILE_OVERRIDE_PATH"] = str(abs_profile_path)
-            env["PROFILING_RUN_ID"] = full_run_id
-
-            # Disable Prometheus/OTLP profiling when monitoring is skipped
-            if skip_monitoring:
-                env["ENABLE_PROFILING"] = "0"
-                env["ENABLE_TRACING"] = "0"
-            # Set NODE_*_IP for all nodes so they can communicate
-            # Default to localhost with port 8000 + node_number for local testing
-            for i in range(total_nodes):
-                ip_key = f"NODE_{i}_IP"
-                if ip_key not in env:
-                    env[ip_key] = f"localhost:{8000 + i}"
-
-            # Check for profiling configuration in manifest
-            profiling_config = manifest.get("profiling", {})
-            if profiling_config.get("enabled", False) or manifest.get(
-                "profile_with_scalene", False
-            ):
-                env["PROFILE_WITH_SCALENE"] = "1"
-                # Disable built-in profiling/tracing to avoid overhead when using Scalene
-                env["ENABLE_PROFILING"] = "0"
-                env["ENABLE_TRACING"] = "0"
-
-                # Add any other profiling env vars
-                if "env" in profiling_config:
-                    for k, v in profiling_config["env"].items():
-                        env[k] = str(v)
-
-            # Apply env overrides
-            if "env" in node:
-                for k, v in node["env"].items():
-                    env[k] = str(v)
-
-            log_file = (output_dir / f"node_{node_num}.log").open("w")
-
-            print(f"Starting Node {node_num} with profile {profile_path}...")
-            p = subprocess.Popen(
-                [str(REPO_ROOT / "run.sh")],
-                env=env,
-                stdout=log_file,
-                stderr=subprocess.STDOUT,
-                cwd=REPO_ROOT,
-                preexec_fn=os.setsid,  # Create new process group for easier cleanup
-            )
-            processes.append((p, log_file))
-
-        # Wait for health
+        processes = _start_pipeline_nodes(nodes, manifest, full_run_id, skip_monitoring, output_dir)
         wait_for_health(nodes)
-
-        # Run Workload
-        workload = manifest.get("workload", {})
-        requests_count = workload.get("requests", 10)
-        concurrency = workload.get("concurrency", 1)
-        rate_limit = workload.get("rate_limit", 0.1)
-
-        print(f"Running workload: {requests_count} requests (concurrency={concurrency})...")
-        profile_cmd = [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "profile_pipeline.py"),
-            "--requests",
-            str(requests_count),
-            "--concurrency",
-            str(concurrency),
-            "--rate-limit",
-            str(rate_limit),
-            "--no-interactive",
-            "--output-dir",
-            str(output_dir / "profile_data"),
-        ]
-
-        profile_env = os.environ.copy()
-        profile_env["PROFILING_RUN_ID"] = full_run_id
-
-        # Attempt to detect batch size from manifest or profiles to report correctly
-        detected_batch_size = "32"  # Default in ProfileFile schema
-
-        # Check manifest env overrides
-        for node in nodes:
-            if "env" in node and "GATEWAY_BATCH_SIZE" in node["env"]:
-                detected_batch_size = str(node["env"]["GATEWAY_BATCH_SIZE"])
-                break
-
-        # If not in manifest, check node 0 profile (assumed gateway)
-        if detected_batch_size == "32":
-            for node in nodes:
-                if node["number"] == 0:
-                    with contextlib.suppress(Exception):
-                        p_path = (REPO_ROOT / node["profile"]).resolve()
-                        with p_path.open() as f:
-                            p_data = yaml.safe_load(f)
-                            if "batch_size" in p_data:
-                                detected_batch_size = str(p_data["batch_size"])
-                    break
-
-        profile_env["GATEWAY_BATCH_SIZE"] = detected_batch_size
-
-        subprocess.run(profile_cmd, env=profile_env, check=True)
-
-        # Capture Metrics
-        print("Capturing metrics...")
-        end_time = time.time()
-
-        metrics_output = output_dir / "metrics.csv"
-        capture_cmd = [
-            sys.executable,
-            str(REPO_ROOT / "scripts" / "capture_metrics.py"),
-            "--run-id",
-            full_run_id,
-            "--start-time",
-            str(experiment_start_time),
-            "--end-time",
-            str(end_time),
-            "--output-file",
-            str(metrics_output),
-        ]
-        subprocess.run(capture_cmd, check=False)  # Don't fail if metrics fail
+        _run_workload(manifest, nodes, full_run_id, output_dir)
+        _capture_metrics(full_run_id, output_dir, experiment_start_time)
 
         # Snapshot process stats
         print("Snapshotting process stats...")
@@ -377,36 +469,7 @@ def run_experiment(
     except Exception as e:
         print(f"Experiment failed: {e}")
     finally:
-        print("Tearing down nodes...")
-        for p, f in processes:
-            try:
-                os.killpg(os.getpgid(p.pid), signal.SIGTERM)
-                # Increased timeout to allow Scalene to generate reports
-                p.wait(timeout=15)
-            except Exception:
-                with contextlib.suppress(Exception):
-                    os.killpg(os.getpgid(p.pid), signal.SIGKILL)
-            f.close()
-
-        # Final cleanup: ensure all pipeline processes are dead
-        remaining = get_pipeline_processes()
-        if remaining:
-            print(f"Cleaning up {len(remaining)} remaining pipeline process(es)...")
-            for proc in remaining:
-                with contextlib.suppress(Exception):
-                    proc.kill()
-            psutil.wait_procs(remaining, timeout=5)
-
-        # Copy Scalene reports if they exist
-        scalene_src_dir = REPO_ROOT / "artifacts" / "scalene" / full_run_id
-        if scalene_src_dir.exists():
-            print(f"Copying Scalene reports from {scalene_src_dir}...")
-            scalene_dest_dir = output_dir / "scalene"
-            scalene_dest_dir.mkdir(exist_ok=True)
-            for item in scalene_src_dir.iterdir():
-                if item.is_file():
-                    shutil.copy(item, scalene_dest_dir / item.name)
-            print(f"Scalene reports copied to {scalene_dest_dir}")
+        _cleanup_processes(processes, output_dir, full_run_id)
 
 
 if __name__ == "__main__":
