@@ -209,3 +209,23 @@ class ToxicityFilter:
         is_toxic = score > self.threshold
 
         return is_toxic, score
+
+    def check_batch(self, texts: list[str]) -> list[tuple[bool, float]]:
+        """
+        Check toxicity for a batch of texts and return scores.
+        """
+        if not self._loaded or self.pipeline is None:
+            msg = "Toxicity model not loaded"
+            raise RuntimeError(msg)
+
+        if not texts:
+            return []
+
+        # Truncate all texts
+        truncated_texts = [text[: self.settings.truncate_length] for text in texts]
+
+        # Run batch toxicity detection
+        results = self.pipeline(truncated_texts)
+
+        # Return tuples of (is_toxic, score) for each result
+        return [(result["score"] > self.threshold, result["score"]) for result in results]

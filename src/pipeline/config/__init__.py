@@ -358,7 +358,7 @@ class PipelineSettings(BaseSettings):
     )
 
     enable_torch_compile: bool = Field(
-        default=False,
+        default=True,
         alias="ENABLE_TORCH_COMPILE",
         description="If true, use torch.compile for model optimization (requires PyTorch 2.0+)",
     )

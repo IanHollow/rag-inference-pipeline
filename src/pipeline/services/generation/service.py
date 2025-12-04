@@ -87,8 +87,9 @@ class GenerationService:
     def process_batch(self, generation_request: GenerationRequest) -> GenerationResponse:
         """
         Process a batch of generation requests.
-        Optimized for low latency by processing sequentially - GPU/MPS models
-        don't benefit from thread parallelism due to GIL and single-device execution.
+
+        Uses sequential processing for CPU (more efficient due to padding overhead)
+        and batched processing for GPU/MPS (better utilization).
         """
         start_time = time.time()
         batch_size = len(generation_request.items)
@@ -115,14 +116,17 @@ class GenerationService:
             "Processing generation batch: %s with %d items", generation_request.batch_id, batch_size
         )
 
-        # Cache component references for hot loop
+        # Cache component references
         reranker = self.reranker
         llm_generator = self.llm_generator
         sentiment_analyzer = self.sentiment_analyzer
         toxicity_filter = self.toxicity_filter
         document_store = self.document_store
 
-        response_items: list[GenerationResponseItem] = []
+        # Determine processing strategy based on device
+        # CPU: sequential is faster (no padding overhead)
+        # GPU/MPS: batched is faster (parallel processing)
+        use_batched = llm_generator.device.type in ("cuda", "mps")
 
         with tracer.start_as_current_span(
             "generation.batch",
@@ -132,9 +136,9 @@ class GenerationService:
                 "pipeline.node": settings.node_number,
             },
         ):
-            for item in generation_request.items:
-                response_item = self._process_single_item(
-                    item=item,
+            if use_batched and batch_size > 1:
+                response_items = self._process_batch_parallel(
+                    generation_request=generation_request,
                     reranker=reranker,
                     llm_generator=llm_generator,
                     sentiment_analyzer=sentiment_analyzer,
@@ -143,7 +147,17 @@ class GenerationService:
                     profiler=profiler,
                     run_id=run_id,
                 )
-                response_items.append(response_item)
+            else:
+                response_items = self._process_batch_sequential(
+                    generation_request=generation_request,
+                    reranker=reranker,
+                    llm_generator=llm_generator,
+                    sentiment_analyzer=sentiment_analyzer,
+                    toxicity_filter=toxicity_filter,
+                    document_store=document_store,
+                    profiler=profiler,
+                    run_id=run_id,
+                )
 
         # Record total duration
         total_duration = time.time() - start_time
@@ -182,9 +196,107 @@ class GenerationService:
             processing_time=total_duration,
         )
 
-    def _process_single_item(
+    def _process_batch_sequential(
         self,
-        item: GenerationRequestItem,
+        generation_request: GenerationRequest,
+        reranker: Reranker | None,
+        llm_generator: LLMGenerator,
+        sentiment_analyzer: SentimentAnalyzer | None,
+        toxicity_filter: ToxicityFilter | None,
+        document_store: DocumentStore | None,
+        profiler: SampledStageProfiler | None,
+        run_id: str,  # noqa: ARG002 - kept for API consistency with _process_batch_parallel
+    ) -> list[GenerationResponseItem]:
+        """
+        Process items sequentially - optimal for CPU inference.
+
+        Sequential processing avoids padding overhead and memory spikes
+        that occur with batched inference on CPU.
+        """
+        response_items: list[GenerationResponseItem] = []
+
+        for item in generation_request.items:
+            # Prepare documents
+            docs = self._prepare_documents(item, document_store)
+
+            # Rerank
+            rerank_start = time.time()
+            if reranker:
+                with tracer.start_as_current_span("generation.rerank"):
+                    if profiler:
+                        with profiler.track("generation.rerank"):
+                            reranked_docs = reranker.rerank(item.query, docs)
+                    else:
+                        reranked_docs = reranker.rerank(item.query, docs)
+            else:
+                # Fast path: skip object creation, use docs directly
+                reranked_docs = [
+                    RerankedDocument(
+                        doc_id=doc.doc_id,
+                        title=doc.title,
+                        content=doc.content,
+                        category=doc.category,
+                        score=1.0,
+                    )
+                    for doc in docs
+                ]
+            rerank_elapsed = time.time() - rerank_start
+            rerank_duration.observe(rerank_elapsed)
+
+            # LLM generation (use top 3 docs)
+            context_docs = reranked_docs[:3]
+            llm_start = time.time()
+            with tracer.start_as_current_span("generation.llm"):
+                if profiler:
+                    with profiler.track("generation.llm"):
+                        generated_text = llm_generator.generate(item.query, context_docs)
+                else:
+                    generated_text = llm_generator.generate(item.query, context_docs)
+            llm_elapsed = time.time() - llm_start
+            llm_generation_duration.observe(llm_elapsed)
+
+            # Sentiment analysis
+            sentiment_score: str | None = None
+            if sentiment_analyzer:
+                sentiment_start = time.time()
+                with tracer.start_as_current_span("generation.sentiment"):
+                    if profiler:
+                        with profiler.track("generation.sentiment"):
+                            sentiment_score = sentiment_analyzer.analyze(generated_text)
+                    else:
+                        sentiment_score = sentiment_analyzer.analyze(generated_text)
+                sentiment_elapsed = time.time() - sentiment_start
+                sentiment_duration.observe(sentiment_elapsed)
+
+            # Toxicity filter
+            is_toxic = False
+            if toxicity_filter:
+                toxicity_start = time.time()
+                with tracer.start_as_current_span("generation.toxicity"):
+                    if profiler:
+                        with profiler.track("generation.toxicity"):
+                            is_toxic, _ = toxicity_filter.check(generated_text)
+                    else:
+                        is_toxic, _ = toxicity_filter.check(generated_text)
+                toxicity_elapsed = time.time() - toxicity_start
+                toxicity_duration.observe(toxicity_elapsed)
+
+            # Build response
+            final_text = "[Content Filtered due to toxicity]" if is_toxic else generated_text
+            response_items.append(
+                GenerationResponseItem(
+                    request_id=item.request_id,
+                    generated_response=final_text,
+                    sentiment=sentiment_score,
+                    is_toxic="true" if is_toxic else "false" if toxicity_filter else None,
+                )
+            )
+
+        return response_items
+
+    def _process_batch_parallel(
+        self,
+        generation_request: GenerationRequest,
         reranker: Reranker | None,
         llm_generator: LLMGenerator,
         sentiment_analyzer: SentimentAnalyzer | None,
@@ -192,9 +304,125 @@ class GenerationService:
         document_store: DocumentStore | None,
         profiler: SampledStageProfiler | None,
         run_id: str,
-    ) -> GenerationResponseItem:
-        """Process a single generation request item. Optimized hot path."""
+    ) -> list[GenerationResponseItem]:
+        """
+        Process items in parallel batches - optimal for GPU/MPS inference.
 
+        Batched processing utilizes GPU parallelism for significant speedups.
+        """
+        batch_size = len(generation_request.items)
+
+        # === Stage 0: Decompress and fetch documents for all items ===
+        all_docs: list[list[Document]] = []
+        for item in generation_request.items:
+            docs = self._prepare_documents(item, document_store)
+            all_docs.append(docs)
+
+        # === Stage 1: Batch rerank all documents ===
+        rerank_start = time.time()
+        queries = [item.query for item in generation_request.items]
+
+        if reranker:
+            with tracer.start_as_current_span("generation.rerank"):
+                if profiler:
+                    with profiler.track("generation.rerank"):
+                        all_reranked = reranker.rerank_batch(queries, all_docs)
+                else:
+                    all_reranked = reranker.rerank_batch(queries, all_docs)
+        else:
+            all_reranked = [
+                [
+                    RerankedDocument(
+                        doc_id=doc.doc_id,
+                        title=doc.title,
+                        content=doc.content,
+                        category=doc.category,
+                        score=1.0,
+                    )
+                    for doc in docs
+                ]
+                for docs in all_docs
+            ]
+
+        rerank_elapsed = time.time() - rerank_start
+        rerank_duration.observe(rerank_elapsed)
+        stage_duration_gauge.labels(run_id=run_id, node=NODE_LABEL, stage="generation.rerank").set(
+            rerank_elapsed
+        )
+
+        # === Stage 2: Batch LLM generation (use top 3 docs per query) ===
+        llm_start = time.time()
+        context_docs_batch = [reranked[:3] for reranked in all_reranked]
+
+        with tracer.start_as_current_span("generation.llm"):
+            if profiler:
+                with profiler.track("generation.llm"):
+                    generated_texts = llm_generator.generate_batch(queries, context_docs_batch)
+            else:
+                generated_texts = llm_generator.generate_batch(queries, context_docs_batch)
+
+        llm_elapsed = time.time() - llm_start
+        llm_generation_duration.observe(llm_elapsed)
+        stage_duration_gauge.labels(run_id=run_id, node=NODE_LABEL, stage="generation.llm").set(
+            llm_elapsed
+        )
+
+        # === Stage 3: Batch sentiment analysis ===
+        sentiment_scores: list[str | None]
+        if sentiment_analyzer:
+            sentiment_start = time.time()
+            with tracer.start_as_current_span("generation.sentiment"):
+                if profiler:
+                    with profiler.track("generation.sentiment"):
+                        sentiment_scores = list(sentiment_analyzer.analyze_batch(generated_texts))
+                else:
+                    sentiment_scores = list(sentiment_analyzer.analyze_batch(generated_texts))
+            sentiment_elapsed = time.time() - sentiment_start
+            sentiment_duration.observe(sentiment_elapsed)
+            stage_duration_gauge.labels(
+                run_id=run_id, node=NODE_LABEL, stage="generation.sentiment"
+            ).set(sentiment_elapsed)
+        else:
+            sentiment_scores = [None] * batch_size
+
+        # === Stage 4: Batch toxicity filtering ===
+        toxicity_results: list[tuple[bool, float]] = [(False, 0.0)] * batch_size
+        if toxicity_filter:
+            toxicity_start = time.time()
+            with tracer.start_as_current_span("generation.toxicity"):
+                if profiler:
+                    with profiler.track("generation.toxicity"):
+                        toxicity_results = toxicity_filter.check_batch(generated_texts)
+                else:
+                    toxicity_results = toxicity_filter.check_batch(generated_texts)
+            toxicity_elapsed = time.time() - toxicity_start
+            toxicity_duration.observe(toxicity_elapsed)
+            stage_duration_gauge.labels(
+                run_id=run_id, node=NODE_LABEL, stage="generation.toxicity"
+            ).set(toxicity_elapsed)
+
+        # === Build response items ===
+        response_items: list[GenerationResponseItem] = []
+        for i, item in enumerate(generation_request.items):
+            is_toxic = toxicity_results[i][0]
+            final_text = "[Content Filtered due to toxicity]" if is_toxic else generated_texts[i]
+            response_items.append(
+                GenerationResponseItem(
+                    request_id=item.request_id,
+                    generated_response=final_text,
+                    sentiment=sentiment_scores[i],
+                    is_toxic="true" if is_toxic else "false" if toxicity_filter else None,
+                )
+            )
+
+        return response_items
+
+    def _prepare_documents(
+        self,
+        item: GenerationRequestItem,
+        document_store: DocumentStore | None,
+    ) -> list[Document]:
+        """Decompress and/or fetch documents for a single item."""
         # Step -1: Decompress documents if needed
         if item.compressed_docs:
             try:
@@ -229,95 +457,4 @@ class GenerationService:
                 )
                 for d in fetched_docs
             ]
-
-        # Step 1: Rerank documents
-        rerank_start = time.time()
-
-        if reranker:
-            with tracer.start_as_current_span("generation.rerank"):
-                if profiler:
-                    with profiler.track("generation.rerank"):
-                        reranked_docs = reranker.rerank(item.query, docs)
-                else:
-                    reranked_docs = reranker.rerank(item.query, docs)
-        else:
-            # Fast path: no reranking needed
-            reranked_docs = [
-                RerankedDocument(
-                    doc_id=doc.doc_id,
-                    title=doc.title,
-                    content=doc.content,
-                    category=doc.category,
-                    score=1.0,
-                )
-                for doc in docs
-            ]
-
-        rerank_elapsed = time.time() - rerank_start
-        rerank_duration.observe(rerank_elapsed)
-        stage_duration_gauge.labels(run_id=run_id, node=NODE_LABEL, stage="generation.rerank").set(
-            rerank_elapsed
-        )
-
-        # Step 2: Generate text with LLM (use top 3 docs)
-        context_docs = reranked_docs[:3]
-        llm_start = time.time()
-
-        with tracer.start_as_current_span("generation.llm"):
-            if profiler:
-                with profiler.track("generation.llm"):
-                    generated_text = llm_generator.generate(item.query, context_docs)
-            else:
-                generated_text = llm_generator.generate(item.query, context_docs)
-
-        llm_elapsed = time.time() - llm_start
-        llm_generation_duration.observe(llm_elapsed)
-        stage_duration_gauge.labels(run_id=run_id, node=NODE_LABEL, stage="generation.llm").set(
-            llm_elapsed
-        )
-
-        # Step 3: Sentiment Analysis
-        sentiment_score: str | None = None
-        if sentiment_analyzer:
-            sentiment_start = time.time()
-
-            with tracer.start_as_current_span("generation.sentiment"):
-                if profiler:
-                    with profiler.track("generation.sentiment"):
-                        sentiment_score = sentiment_analyzer.analyze(generated_text)
-                else:
-                    sentiment_score = sentiment_analyzer.analyze(generated_text)
-
-            sentiment_elapsed = time.time() - sentiment_start
-            sentiment_duration.observe(sentiment_elapsed)
-            stage_duration_gauge.labels(
-                run_id=run_id, node=NODE_LABEL, stage="generation.sentiment"
-            ).set(sentiment_elapsed)
-
-        # Step 4: Toxicity Filter
-        is_toxic = False
-        if toxicity_filter:
-            toxicity_start = time.time()
-
-            with tracer.start_as_current_span("generation.toxicity"):
-                if profiler:
-                    with profiler.track("generation.toxicity"):
-                        is_toxic, _ = toxicity_filter.check(generated_text)
-                else:
-                    is_toxic, _ = toxicity_filter.check(generated_text)
-
-            toxicity_elapsed = time.time() - toxicity_start
-            toxicity_duration.observe(toxicity_elapsed)
-            stage_duration_gauge.labels(
-                run_id=run_id, node=NODE_LABEL, stage="generation.toxicity"
-            ).set(toxicity_elapsed)
-
-        # Filter if toxic
-        final_text = "[Content Filtered due to toxicity]" if is_toxic else generated_text
-
-        return GenerationResponseItem(
-            request_id=item.request_id,
-            generated_response=final_text,
-            sentiment=sentiment_score,
-            is_toxic="true" if is_toxic else "false" if toxicity_filter else None,
-        )
+        return docs
