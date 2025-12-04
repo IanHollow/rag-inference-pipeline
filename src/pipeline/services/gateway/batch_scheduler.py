@@ -27,61 +27,57 @@ T = TypeVar("T")
 
 class AdaptiveBatchPolicy:
     """
-    Policy for dynamically adjusting batch size and delay based on load.
+    Policy for dynamically adjusting batch delay based on load.
+
+    The batch size (max_batch_size) is fixed - it's the threshold for immediate flush.
+    The delay is adaptive: shorter under low load for responsiveness, longer under
+    high load to allow more requests to accumulate.
     """
 
     def __init__(
         self,
-        min_batch_size: int = 1,
-        max_batch_size: int = 32,
-        min_delay_sec: float = 0.05,
-        max_delay_sec: float = 0.5,
+        max_batch_size: int = 16,
+        min_delay_sec: float = 0.01,
+        max_delay_sec: float = 0.2,
     ) -> None:
-        self.min_batch_size = min_batch_size
         self.max_batch_size = max_batch_size
         self.min_delay_sec = min_delay_sec
         self.max_delay_sec = max_delay_sec
 
-        # Current state
-        self.current_batch_size = float(min_batch_size)
+        # Current state - start with shorter delay for responsiveness
         self.current_delay = min_delay_sec
+        # Track recent queue depths to detect load trends
+        self._recent_depths: list[int] = []
+        self._max_history = 10
 
-    def update(self, queue_depth: int) -> tuple[int, float]:
+    def update(self, queue_depth: int) -> float:
         """
         Update policy based on current queue depth.
 
         Returns:
-            Tuple of (new_batch_size, new_delay_seconds)
+            The recommended delay in seconds before flushing a partial batch.
         """
-        # Scale batch size proportionally to queue depth
-        # This provides smoother scaling than discrete thresholds
-        if queue_depth >= self.max_batch_size:
-            # Queue is at or above max batch size - use maximum settings
-            target_batch = self.max_batch_size
+        # Track recent queue depths
+        self._recent_depths.append(queue_depth)
+        if len(self._recent_depths) > self._max_history:
+            self._recent_depths.pop(0)
+
+        # Use average recent depth to smooth out fluctuations
+        avg_depth = sum(self._recent_depths) / len(self._recent_depths)
+
+        # Scale delay based on average queue depth relative to max batch size
+        # Higher queue depth = more load = longer delay to batch more
+        if avg_depth >= self.max_batch_size:
             target_delay = self.max_delay_sec
-        elif queue_depth > 0:
-            # Scale linearly based on queue depth relative to max batch size
-            ratio = queue_depth / self.max_batch_size
-            target_batch = max(
-                self.min_batch_size,
-                int(self.min_batch_size + ratio * (self.max_batch_size - self.min_batch_size)),
-            )
-            target_delay = self.min_delay_sec + ratio * (self.max_delay_sec - self.min_delay_sec)
         else:
-            target_batch = self.min_batch_size
-            target_delay = self.min_delay_sec
+            ratio = avg_depth / self.max_batch_size
+            target_delay = self.min_delay_sec + ratio * (self.max_delay_sec - self.min_delay_sec)
 
-        # Smooth transitions using EWMA - use faster adaptation (0.5) for responsiveness
-        self.current_batch_size = (self.current_batch_size * 0.5) + (target_batch * 0.5)
-        self.current_delay = (self.current_delay * 0.5) + (target_delay * 0.5)
+        # Smooth transitions using EWMA
+        self.current_delay = (self.current_delay * 0.7) + (target_delay * 0.3)
 
-        # Clamp values
-        final_batch_size = max(
-            self.min_batch_size, min(int(self.current_batch_size), self.max_batch_size)
-        )
-        final_delay = max(self.min_delay_sec, min(self.current_delay, self.max_delay_sec))
-
-        return final_batch_size, final_delay
+        # Clamp value
+        return max(self.min_delay_sec, min(self.current_delay, self.max_delay_sec))
 
 
 @dataclass
@@ -128,14 +124,11 @@ class BatchScheduler(Generic[T]):
         self.enable_adaptive = enable_adaptive
 
         self.policy: AdaptiveBatchPolicy | None
-        self._configured_batch_size = batch_size  # Store original configured value
+        self._configured_batch_size = batch_size  # Store original configured value (used as max)
         if enable_adaptive:
-            # Use the configured batch_size and timeout as the upper limits for the adaptive policy
-            # Under low load, will batch up to batch_size before timeout
-            # Under high load, can scale up to 4x batch_size
+            # Adaptive policy adjusts delay based on load, batch_size is fixed as maximum
             self.policy = AdaptiveBatchPolicy(
-                min_batch_size=batch_size,  # Don't go below configured batch_size
-                max_batch_size=batch_size * 4,  # Allow scaling up to 4x under high load
+                max_batch_size=batch_size,
                 min_delay_sec=min(0.01, self.max_batch_delay_sec),
                 max_delay_sec=self.max_batch_delay_sec,
             )
@@ -197,14 +190,11 @@ class BatchScheduler(Generic[T]):
             self._pending_requests.append(request)
             self._pending_futures.append(future)
 
-            # Update adaptive policy if enabled
+            # Update adaptive delay if enabled (batch_size stays fixed)
             if self.enable_adaptive and self.policy:
-                new_size, new_delay = self.policy.update(len(self._pending_requests))
-                # Ensure we never reduce below configured batch size
-                new_size = max(new_size, self._configured_batch_size)
-                if new_size != self.batch_size:
-                    logger.debug("Adaptive batching: size=%d, delay=%.3fs", new_size, new_delay)
-                    self.batch_size = new_size
+                new_delay = self.policy.update(len(self._pending_requests))
+                if abs(new_delay - self.max_batch_delay_sec) > 0.001:
+                    logger.debug("Adaptive batching: delay=%.3fs", new_delay)
                     self.max_batch_delay_sec = new_delay
 
             # Update queue depth metric
@@ -221,12 +211,15 @@ class BatchScheduler(Generic[T]):
                 self.batch_size,
             )
 
-            # If batch is full, flush immediately
+            # If batch is full (reached max batch size), flush immediately
             if len(self._pending_requests) >= self.batch_size:
                 await self._flush_batch(reason="full")
             elif len(self._pending_requests) == 1:
                 # First request in batch, start timer
                 self._timer_task = asyncio.create_task(self._batch_timer())
+
+        # Wait for result
+        return await future
 
         # Wait for result
         return await future

@@ -14,8 +14,8 @@ nodes:
     profile: configs/generation_no_rerank.yaml
 
 workload:
-  requests: 80
-  concurrency: 32
+  requests: 256
+  concurrency: 128
   timeout: 300
 
 notes: |-

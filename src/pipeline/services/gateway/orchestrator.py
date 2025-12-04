@@ -266,7 +266,10 @@ class Orchestrator:
         futures = [loop.create_future() for _ in batch.requests]
 
         # Split into chunks for pipelining
-        chunk_size = 4  # Smaller chunks for better pipelining
+        # Chunk size is adaptive: batch_size / pipeline_chunks, with minimum of 1
+        batch_size = self.batch_scheduler._configured_batch_size
+        num_chunks = settings.gateway_pipeline_chunks
+        chunk_size = max(1, batch_size // num_chunks)
         chunks_reqs = [
             batch.requests[i : i + chunk_size] for i in range(0, len(batch.requests), chunk_size)
         ]

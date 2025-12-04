@@ -264,9 +264,9 @@ class PipelineSettings(BaseSettings):
 
     # === Batching Configuration ===
     gateway_batch_size: int = Field(
-        default=4,
+        default=32,
         ge=1,
-        description="Batch size for gateway request accumulation",
+        description="Max batch size for gateway request accumulation (adaptive batching scales 1 to this value)",
     )
 
     gateway_batch_timeout_ms: int = Field(
@@ -276,15 +276,15 @@ class PipelineSettings(BaseSettings):
     )
 
     retrieval_batch_size: int = Field(
-        default=8,
+        default=32,
         ge=1,
-        description="Batch size for retrieval service operations",
+        description="Max batch size for retrieval service operations (adaptive batching scales 1 to this value)",
     )
 
     generation_batch_size: int = Field(
-        default=4,
+        default=32,
         ge=1,
-        description="Batch size for generation service operations",
+        description="Max batch size for generation service operations (adaptive batching scales 1 to this value)",
     )
 
     # === Batching Tuning Knobs ===
@@ -292,6 +292,13 @@ class PipelineSettings(BaseSettings):
         default=1,
         ge=1,
         description="Minimum batch size for gateway adaptive batching",
+    )
+
+    gateway_pipeline_chunks: int = Field(
+        default=4,
+        ge=1,
+        le=16,
+        description="Number of chunks to split gateway batches into for pipelining (chunk_size = batch_size / chunks). More chunks = better pipelining but more RPC overhead.",
     )
 
     retrieval_max_batch_delay_ms: int = Field(
