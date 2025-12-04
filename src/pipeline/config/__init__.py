@@ -189,6 +189,13 @@ class PipelineSettings(BaseSettings):
         description="If true, memory-map FAISS index instead of loading fully into RAM",
     )
 
+    faiss_nprobe: int = Field(
+        default=64,
+        ge=1,
+        alias="FAISS_NPROBE",
+        description="Number of IVF clusters to probe during search (speed vs accuracy tradeoff). Lower = faster but less accurate.",
+    )
+
     fuzzy_cache_matching: bool = Field(
         default=False,
         alias="FUZZY_CACHE_MATCHING",
@@ -358,7 +365,7 @@ class PipelineSettings(BaseSettings):
     )
 
     enable_torch_compile: bool = Field(
-        default=True,
+        default=False,
         alias="ENABLE_TORCH_COMPILE",
         description="If true, use torch.compile for model optimization (requires PyTorch 2.0+)",
     )

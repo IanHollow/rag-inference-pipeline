@@ -114,12 +114,22 @@ class FAISSStore:
 
             # Set nprobe for IVF indices to balance speed vs accuracy
             # Higher nprobe = more accurate but slower
-            # nprobe should match or be close to what was used during index creation
+            # Configurable via FAISS_NPROBE environment variable
             if hasattr(self._index, "nprobe"):
-                # With nlist=4096, nprobe=64 searches ~1.5% of clusters
-                # This matches the nprobe value used when creating the index
-                self._index.nprobe = 64
-                logger.info("Set FAISS nprobe to %d for IVF index", self._index.nprobe)
+                self._index.nprobe = self.settings.faiss_nprobe
+                logger.info(
+                    "Set FAISS nprobe to %d for IVF index (searching %.2f%% of clusters)",
+                    self._index.nprobe,
+                    (self._index.nprobe / self._index.nlist * 100) if hasattr(self._index, "nlist") else 0,
+                )
+
+            # Enable precomputed tables for IVFPQ indexes (significant speedup)
+            # This trades memory for speed by precomputing distance tables
+            if hasattr(self._index, "use_precomputed_table"):
+                self._index.use_precomputed_table = 1
+                if hasattr(self._index, "precompute_table"):
+                    self._index.precompute_table()
+                logger.info("Enabled precomputed tables for IVFPQ index")
 
             # Warmup
             if index_size > 0 and self._index is not None:
