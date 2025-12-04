@@ -90,11 +90,11 @@ def load_role_profile(settings: PipelineSettings) -> ProfileFile:
     if not path and not settings.role_profile_override_path:
         profile_name = ""
         if settings.node_number == 0:
-            profile_name = "gateway_with_embedding"
+            profile_name = "baseline_gateway"
         elif settings.node_number == 1:
-            profile_name = "retrieval"
+            profile_name = "retriever_with_rerank"
         elif settings.node_number == 2:
-            profile_name = "generation"
+            profile_name = "generation_no_rerank"
 
         if profile_name:
             logger.info(
