@@ -8,6 +8,7 @@ from typing import Any
 
 import httpx
 
+
 PROMETHEUS_URL = "http://localhost:9090"
 
 
@@ -27,10 +28,12 @@ def query_prometheus_range(query: str, start: float, end: float, step: str = "5s
         if data["status"] != "success":
             print(f"Prometheus query failed: {data}", file=sys.stderr)
             return []
-        return data["data"]["result"]
+        result: list[dict[Any, Any]] = data["data"]["result"]
     except Exception as e:
         print(f"Error querying Prometheus: {e}", file=sys.stderr)
         return []
+    else:
+        return result
 
 
 def capture_metrics(run_id: str, start_time: float, end_time: float, output_file: str) -> None:

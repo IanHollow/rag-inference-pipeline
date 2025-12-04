@@ -43,13 +43,13 @@ class TestSetupTracing:
         from pipeline.telemetry import tracing
 
         # Reset state
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
         with patch.object(tracing, "TracerProvider") as mock_provider:
             tracing.setup_tracing(settings_tracing_disabled, "test-service")
 
             mock_provider.assert_not_called()
-            assert not tracing._configured
+            assert not tracing._tracing_state.configured
 
     @patch("pipeline.telemetry.tracing.HTTPXClientInstrumentor")
     @patch("pipeline.telemetry.tracing.OTLPSpanExporter")
@@ -65,7 +65,7 @@ class TestSetupTracing:
         from pipeline.telemetry import tracing
 
         # Reset state
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
         mock_exporter.return_value = MagicMock()
         mock_httpx_instr.return_value.instrument = MagicMock()
@@ -85,10 +85,10 @@ class TestSetupTracing:
         )
 
         # Verify configured flag is set
-        assert tracing._configured
+        assert tracing._tracing_state.configured
 
         # Reset for other tests
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
     @patch("pipeline.telemetry.tracing.HTTPXClientInstrumentor")
     @patch("pipeline.telemetry.tracing.OTLPSpanExporter")
@@ -104,7 +104,7 @@ class TestSetupTracing:
         from pipeline.telemetry import tracing
 
         # Reset state
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
         mock_exporter.return_value = MagicMock()
         mock_httpx_instr.return_value.instrument = MagicMock()
@@ -117,7 +117,7 @@ class TestSetupTracing:
         mock_trace.set_tracer_provider.assert_called_once()
 
         # Reset for other tests
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
     @patch("pipeline.telemetry.tracing.HTTPXClientInstrumentor")
     @patch("pipeline.telemetry.tracing.ConsoleSpanExporter")
@@ -125,7 +125,7 @@ class TestSetupTracing:
     @patch("pipeline.telemetry.tracing.trace")
     def test_setup_tracing_fallback_to_console(
         self,
-        mock_trace: MagicMock,
+        _mock_trace: MagicMock,
         mock_otlp_exporter: MagicMock,
         mock_console_exporter: MagicMock,
         mock_httpx_instr: MagicMock,
@@ -135,7 +135,7 @@ class TestSetupTracing:
         from pipeline.telemetry import tracing
 
         # Reset state
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
         # Make OTLP fail
         mock_otlp_exporter.side_effect = Exception("Connection failed")
@@ -148,7 +148,7 @@ class TestSetupTracing:
         mock_console_exporter.assert_called_once()
 
         # Reset for other tests
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
 
 class TestInstrumentFastAPIApp:
@@ -201,7 +201,7 @@ class TestResourceConfiguration:
     def test_resource_attributes(
         self,
         mock_resource: MagicMock,
-        mock_trace: MagicMock,
+        _mock_trace: MagicMock,
         mock_exporter: MagicMock,
         mock_httpx_instr: MagicMock,
         settings: PipelineSettings,
@@ -210,7 +210,7 @@ class TestResourceConfiguration:
         from pipeline.telemetry import tracing
 
         # Reset state
-        tracing._configured = False
+        tracing._tracing_state.configured = False
 
         mock_exporter.return_value = MagicMock()
         mock_httpx_instr.return_value.instrument = MagicMock()
@@ -229,4 +229,4 @@ class TestResourceConfiguration:
         assert call_args["pipeline.role"] == "retrieval"
 
         # Reset for other tests
-        tracing._configured = False
+        tracing._tracing_state.configured = False

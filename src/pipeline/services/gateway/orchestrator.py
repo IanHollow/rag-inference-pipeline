@@ -43,6 +43,7 @@ from .schemas import (
     RetrievalResponse,
 )
 
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 tracer = trace.get_tracer(__name__)
@@ -190,8 +191,7 @@ class Orchestrator:
         if cache_enabled and (cached := self.query_cache.get(normalized_query)):
             logger.info("Cache hit for query: %s", query)
             # Update request_id
-            response = cached.model_copy(update={"request_id": request_id})
-            return response
+            return cached.model_copy(update={"request_id": request_id})
 
         # Create pending request
         # Use Msgspec Struct for internal processing
@@ -226,8 +226,6 @@ class Orchestrator:
                 elapsed,
             )
 
-            return result
-
         except Exception as e:
             elapsed = time.time() - start_time
             logger.exception(
@@ -235,7 +233,10 @@ class Orchestrator:
                 request_id,
                 elapsed,
             )
-            raise RPCError(f"Pipeline processing failed: {e}") from e
+            msg = f"Pipeline processing failed: {e}"
+            raise RPCError(msg) from e
+        else:
+            return result
 
     async def _process_batch(self, batch: Batch[QueryResponse]) -> list[QueryResponse]:
         """
@@ -394,14 +395,15 @@ class Orchestrator:
                 rpc_duration,
             )
 
-            return responses
-
         except Exception as e:
             logger.exception(
                 "Retrieval service failed for batch %d",
                 batch_id,
             )
-            raise RPCError(f"Retrieval service error: {e}") from e
+            msg = f"Retrieval service error: {e}"
+            raise RPCError(msg) from e
+        else:
+            return responses
 
     async def _call_generation_service(
         self,
@@ -472,14 +474,15 @@ class Orchestrator:
                 rpc_duration,
             )
 
-            return responses
-
         except Exception as e:
             logger.exception(
                 "Generation service failed for batch %d",
                 batch_id,
             )
-            raise RPCError(f"Generation service error: {e}") from e
+            msg = f"Generation service error: {e}"
+            raise RPCError(msg) from e
+        else:
+            return responses
 
     async def _retrieval_worker(self) -> None:
         """Worker for retrieval stage."""
@@ -555,10 +558,16 @@ class Orchestrator:
                 self.generation_queue.task_done()
                 break
 
-            try:
-                if not chunk.retrieval_responses:
-                    raise ValueError("Missing retrieval responses")
+            if not chunk.retrieval_responses:
+                msg = "Missing retrieval responses"
+                error = ValueError(msg)
+                for f in chunk.futures:
+                    if not f.done():
+                        f.set_exception(error)
+                self.generation_queue.task_done()
+                continue
 
+            try:
                 # Rerank if local reranker is available
                 if self.reranker and getattr(self.reranker, "is_loaded", False):
                     rerank_start = time.time()
@@ -615,6 +624,34 @@ class Orchestrator:
             finally:
                 self.generation_queue.task_done()
 
+    def _apply_sentiment_analysis(self, gen_resp: GenerationResponse) -> None:
+        """Apply sentiment analysis to a generation response if needed."""
+        if (
+            gen_resp.sentiment is None
+            and self.sentiment_analyzer
+            and getattr(self.sentiment_analyzer, "is_loaded", False)
+        ):
+            gen_resp.sentiment = self.sentiment_analyzer.analyze(gen_resp.generated_response)
+
+    def _apply_toxicity_filter(self, gen_resp: GenerationResponse) -> None:
+        """Apply toxicity filtering to a generation response if needed."""
+        if (
+            gen_resp.is_toxic is None
+            and self.toxicity_filter
+            and getattr(self.toxicity_filter, "is_loaded", False)
+        ):
+            is_toxic, _ = self.toxicity_filter.check(gen_resp.generated_response)
+            gen_resp.is_toxic = "true" if is_toxic else "false"
+            if is_toxic:
+                gen_resp.generated_response = "[Content Filtered due to toxicity]"
+
+    def _has_postprocessing_components(self) -> bool:
+        """Check if any postprocessing components are available."""
+        return bool(
+            (self.sentiment_analyzer and getattr(self.sentiment_analyzer, "is_loaded", False))
+            or (self.toxicity_filter and getattr(self.toxicity_filter, "is_loaded", False))
+        )
+
     async def _postproc_worker(self) -> None:
         """Worker for post-processing stage."""
         while True:
@@ -629,41 +666,23 @@ class Orchestrator:
                 self.postproc_queue.task_done()
                 break
 
-            try:
-                if not chunk.generation_responses:
-                    raise ValueError("Missing generation responses")
+            if not chunk.generation_responses:
+                msg = "Missing generation responses"
+                error = ValueError(msg)
+                for f in chunk.futures:
+                    if not f.done():
+                        f.set_exception(error)
+                self.postproc_queue.task_done()
+                continue
 
+            try:
                 # Post-processing (Sentiment/Toxicity) if local
-                if (
-                    self.sentiment_analyzer and getattr(self.sentiment_analyzer, "is_loaded", False)
-                ) or (self.toxicity_filter and getattr(self.toxicity_filter, "is_loaded", False)):
+                if self._has_postprocessing_components():
                     postproc_start = time.time()
                     with chunk.profiler.track("gateway.postprocessing"):
                         for gen_resp in chunk.generation_responses:
-                            # Sentiment
-                            if (
-                                gen_resp.sentiment is None
-                                and self.sentiment_analyzer
-                                and getattr(self.sentiment_analyzer, "is_loaded", False)
-                            ):
-                                gen_resp.sentiment = self.sentiment_analyzer.analyze(
-                                    gen_resp.generated_response
-                                )
-
-                            # Toxicity
-                            if (
-                                gen_resp.is_toxic is None
-                                and self.toxicity_filter
-                                and getattr(self.toxicity_filter, "is_loaded", False)
-                            ):
-                                is_toxic, _ = self.toxicity_filter.check(
-                                    gen_resp.generated_response
-                                )
-                                gen_resp.is_toxic = "true" if is_toxic else "false"
-                                if is_toxic:
-                                    gen_resp.generated_response = (
-                                        "[Content Filtered due to toxicity]"
-                                    )
+                            self._apply_sentiment_analysis(gen_resp)
+                            self._apply_toxicity_filter(gen_resp)
                     stage_duration_gauge.labels(
                         run_id=settings.profiling_run_id,
                         node=str(settings.node_number),

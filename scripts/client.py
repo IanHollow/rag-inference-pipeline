@@ -13,6 +13,7 @@ from typing import Any
 
 import requests
 
+
 # Read NODE_0_IP from environment variable
 NODE_0_IP = os.environ.get("NODE_0_IP", "localhost:8000")
 SERVER_URL = f"http://{NODE_0_IP}/query"

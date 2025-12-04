@@ -14,10 +14,12 @@ import time
 from typing import TYPE_CHECKING, Any, TypeVar, cast
 
 import torch
-import torch.nn as nn
-from transformers import AutoModelForCausalLM, AutoTokenizer, PreTrainedTokenizerBase
+from transformers import AutoModelForCausalLM, AutoTokenizer
+
 
 if TYPE_CHECKING:
+    from torch import nn
+    from transformers import PreTrainedTokenizerBase
     from transformers.modeling_utils import PreTrainedModel
 
     from pipeline.config import PipelineSettings
@@ -219,8 +221,8 @@ class LLMGenerator:
             elapsed = time.time() - start_time
             logger.info("LLM model loaded in %.2f seconds", elapsed)
 
-        except Exception as e:
-            logger.exception("Failed to load LLM model: %s", e)
+        except Exception:
+            logger.exception("Failed to load LLM model")
             raise
 
     def unload(self) -> None:
@@ -271,7 +273,7 @@ class LLMGenerator:
         top_docs = reranked_docs[:3]
         context = "\n".join([f"- {doc.title}: {doc.content[:200]}" for doc in top_docs])
 
-        messages = [
+        return [
             {
                 "role": "system",
                 "content": "When given Context and Question, reply as 'Answer: <final answer>' only.",
@@ -281,8 +283,6 @@ class LLMGenerator:
                 "content": f"Context:\n{context}\n\nQuestion: {query}\n\nAnswer:",
             },
         ]
-
-        return messages
 
     @profile
     def generate(

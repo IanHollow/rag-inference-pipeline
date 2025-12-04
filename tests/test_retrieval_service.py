@@ -77,15 +77,14 @@ class TestDocumentStore:
         shutil.rmtree(temp_dir, ignore_errors=True)
 
     @pytest.fixture
-    def document_store(self, temp_db: Path) -> Generator[DocumentStore, None, None]:
+    def document_store(self, temp_db: Path) -> DocumentStore:
         """Create a DocumentStore instance with test database."""
         settings = PipelineSettings(
             DOCUMENTS_DIR=str(temp_db.parent),
             NODE_NUMBER=1,
         )
 
-        store = DocumentStore(settings)
-        yield store
+        return DocumentStore(settings)
 
     def test_fetch_documents(self, document_store: DocumentStore) -> None:
         """Test fetching documents by IDs."""
@@ -388,8 +387,7 @@ class TestRetrievalServiceAPI:
             return {"status": "healthy", "embedding_loaded": True, "faiss_loaded": True}
 
         # Create test client (skip lifespan)
-        client = TestClient(app)
-        return client
+        return TestClient(app)
 
     def test_health_endpoint(self, client: TestClient) -> None:
         """Test health endpoint."""

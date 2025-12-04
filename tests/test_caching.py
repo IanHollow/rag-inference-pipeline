@@ -18,16 +18,16 @@ class TestLRUCache(unittest.TestCase):
         cache.put("b", 2)
         cache.put("c", 3)
 
-        self.assertIsNone(cache.get("a"))
-        self.assertEqual(cache.get("b"), 2)
-        self.assertEqual(cache.get("c"), 3)
+        assert cache.get("a") is None
+        assert cache.get("b") == 2
+        assert cache.get("c") == 3
 
     def test_ttl(self) -> None:
         cache = LRUCache[str, int](capacity=10, ttl=0.1)
         cache.put("a", 1)
-        self.assertEqual(cache.get("a"), 1)
+        assert cache.get("a") == 1
         time.sleep(0.2)
-        self.assertIsNone(cache.get("a"))
+        assert cache.get("a") is None
 
 
 class TestLRUCacheExtended:
@@ -266,8 +266,8 @@ class TestDocumentStoreCache(unittest.TestCase):
         with patch.object(self.store, "_get_connection") as mock_conn:
             docs = self.store.fetch_documents([doc_id])
             mock_conn.assert_not_called()
-            self.assertEqual(len(docs), 1)
-            self.assertEqual(docs[0].title, "Test")
+            assert len(docs) == 1
+            assert docs[0].title == "Test"
 
 
 if __name__ == "__main__":

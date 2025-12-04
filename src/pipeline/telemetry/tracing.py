@@ -17,29 +17,37 @@ from opentelemetry.instrumentation.fastapi import FastAPIInstrumentor
 from opentelemetry.instrumentation.httpx import HTTPXClientInstrumentor
 from opentelemetry.sdk.resources import SERVICE_NAME, Resource
 from opentelemetry.sdk.trace import TracerProvider
-from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter, SpanExporter
+from opentelemetry.sdk.trace.export import BatchSpanProcessor, ConsoleSpanExporter
+
 
 if TYPE_CHECKING:
     from fastapi import FastAPI
+    from opentelemetry.sdk.trace.export import SpanExporter
 
     from pipeline.config import PipelineSettings
 
 logger = logging.getLogger(__name__)
 _setup_lock = Lock()
-_configured = False
+
+
+class _TracingState:
+    """Container for tracing configuration state to avoid global statement."""
+
+    configured: bool = False
+
+
+_tracing_state = _TracingState()
 
 
 def setup_tracing(settings: PipelineSettings, service_name: str) -> None:
     """
     Configure the global tracer provider for this process.
     """
-    global _configured
-
-    if _configured or not settings.enable_tracing:
+    if _tracing_state.configured or not settings.enable_tracing:
         return
 
     with _setup_lock:
-        if _configured:
+        if _tracing_state.configured:
             return
 
         resource = Resource.create(
@@ -79,7 +87,7 @@ def setup_tracing(settings: PipelineSettings, service_name: str) -> None:
         except Exception as exc:
             logger.warning("Failed to instrument httpx for tracing: %s", exc)
 
-        _configured = True
+        _tracing_state.configured = True
         logger.info("OpenTelemetry tracing configured for %s", service_name)
 
 

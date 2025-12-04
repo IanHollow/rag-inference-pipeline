@@ -60,6 +60,7 @@ def derive_node_role(node_number: int) -> NodeRole:
     }
 
     if node_number not in role_map:
-        raise ValueError(f"Invalid node_number {node_number}.")
+        msg = f"Invalid node_number {node_number}."
+        raise ValueError(msg)
 
     return role_map[node_number]

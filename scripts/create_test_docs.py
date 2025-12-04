@@ -5,6 +5,7 @@ import sqlite3
 import faiss
 import numpy as np
 
+
 # Allow configuration via environment variables for flexibility
 DOCUMENTS_DIR = os.environ.get("DOCUMENTS_DIR", "documents/")
 FAISS_INDEX_PATH = os.environ.get("FAISS_INDEX_PATH", "faiss_index.bin")

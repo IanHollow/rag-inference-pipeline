@@ -13,8 +13,10 @@ import statistics
 import sys
 import time
 from typing import Any
+import uuid
 
 import requests
+
 
 # Path configuration
 REPO_ROOT = Path(__file__).parent.parent
@@ -157,8 +159,6 @@ def run_profiling_batch(
             # Cycle through queries
             query = TEST_QUERIES[i % len(TEST_QUERIES)]
             if randomize_queries:
-                import uuid
-
                 query = f"{query} {uuid.uuid4()}"
 
             request_id = f"profile_{int(time.time() * 1000)}_{i}"

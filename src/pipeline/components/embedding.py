@@ -6,6 +6,7 @@ Manages persistent SentenceTransformer model with warm cache and batch encoding.
 
 import builtins
 from collections.abc import Callable
+import gc
 import hashlib
 import logging
 import threading
@@ -17,6 +18,7 @@ import torch
 
 from pipeline.config import PipelineSettings
 from pipeline.utils.cache import LRUCache
+
 
 T = TypeVar("T", bound=Callable[..., Any])
 
@@ -79,16 +81,20 @@ class EmbeddingGenerator:
             self._model.eval()
             self._is_loaded = True
 
-            # Warmup
+            # Warmup - use show_progress_bar=False to avoid tqdm multiprocessing issues
             logger.info("Warming up embedding model...")
             # Use a longer text to trigger compilation for realistic sequence lengths
             dummy_text = "This is a test sentence for warmup. " * 10
-            self._model.encode([dummy_text], convert_to_numpy=True)
+            self._model.encode(
+                [dummy_text],
+                convert_to_numpy=True,
+                show_progress_bar=False,
+            )
             logger.info("Embedding model warmup complete")
 
             logger.info("Embedding model loaded successfully on %s", self.device)
-        except Exception as e:
-            logger.exception("Failed to load embedding model: %s", e)
+        except Exception:
+            logger.exception("Failed to load embedding model")
             raise
 
     @profile
@@ -107,10 +113,12 @@ class EmbeddingGenerator:
             ValueError: If texts is empty
         """
         if not self._is_loaded or self._model is None:
-            raise RuntimeError("Model not loaded. Call load() first.")
+            msg = "Model not loaded. Call load() first."
+            raise RuntimeError(msg)
 
         if not texts:
-            raise ValueError("Cannot encode empty text list")
+            msg = "Cannot encode empty text list"
+            raise ValueError(msg)
 
         logger.debug("Encoding batch of %d texts", len(texts))
 
@@ -158,8 +166,8 @@ class EmbeddingGenerator:
                         # Update cache
                         key = hashlib.sha256(texts[i].strip().encode()).hexdigest()
                         self.cache.put(key, embedding)
-            except Exception as e:
-                logger.exception("Failed to encode texts: %s", e)
+            except Exception:
+                logger.exception("Failed to encode texts")
                 raise
         else:
             logger.debug("Cache hit for all %d texts", len(texts))
@@ -180,8 +188,6 @@ class EmbeddingGenerator:
             self._model = None
             self._is_loaded = False
             # Force garbage collection
-            import gc
-
             gc.collect()
             if self.device.type == "cuda":
                 torch.cuda.empty_cache()

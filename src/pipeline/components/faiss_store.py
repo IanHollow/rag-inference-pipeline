@@ -5,6 +5,7 @@ Handles lazy loading and persistent storage of FAISS index for ANN search.
 Supports both CPU (faiss-cpu) and GPU (faiss-gpu) backends.
 """
 
+import gc
 import logging
 from pathlib import Path
 
@@ -13,6 +14,7 @@ import numpy as np
 import torch
 
 from pipeline.config import PipelineSettings
+
 
 logger = logging.getLogger(__name__)
 
@@ -68,7 +70,8 @@ class FAISSStore:
             return
 
         if not self.index_path.exists():
-            raise FileNotFoundError(f"FAISS index not found at {self.index_path}")
+            msg = f"FAISS index not found at {self.index_path}"
+            raise FileNotFoundError(msg)
 
         logger.info("Loading FAISS index from %s", self.index_path)
         try:
@@ -125,8 +128,9 @@ class FAISSStore:
                 self._index.search(dummy_vector, 1)
                 logger.info("FAISS index warmup complete")
         except Exception as e:
-            logger.exception("Failed to load FAISS index: %s", e)
-            raise RuntimeError(f"FAISS index loading failed: {e}") from e
+            logger.exception("Failed to load FAISS index")
+            msg = f"FAISS index loading failed: {e}"
+            raise RuntimeError(msg) from e
 
     def search(self, embeddings: np.ndarray, k: int) -> tuple[np.ndarray, np.ndarray]:
         """
@@ -146,17 +150,20 @@ class FAISSStore:
             ValueError: If embeddings have wrong shape
         """
         if not self._is_loaded or self._index is None:
-            raise RuntimeError("FAISS index not loaded. Call load() first.")
+            msg = "FAISS index not loaded. Call load() first."
+            raise RuntimeError(msg)
 
         # Validate embedding shape
         if embeddings.ndim != 2:
-            raise ValueError(f"Embeddings must be 2D array, got shape {embeddings.shape}")
+            msg = f"Embeddings must be 2D array, got shape {embeddings.shape}"
+            raise ValueError(msg)
 
         if embeddings.shape[1] != self.settings.faiss_dim:
-            raise ValueError(
+            msg = (
                 f"Embedding dimension mismatch: expected {self.settings.faiss_dim}, "
                 f"got {embeddings.shape[1]}"
             )
+            raise ValueError(msg)
 
         # Ensure correct dtype for FAISS
         embeddings = embeddings.astype("float32")
@@ -166,10 +173,11 @@ class FAISSStore:
         try:
             distances, indices = self._index.search(embeddings, k)
             logger.debug("FAISS search completed: found %s results", indices.shape)
-            return distances, indices
-        except Exception as e:
-            logger.exception("FAISS search failed: %s", e)
+        except Exception:
+            logger.exception("FAISS search failed")
             raise
+        else:
+            return distances, indices
 
     def unload(self) -> None:
         """
@@ -182,8 +190,6 @@ class FAISSStore:
             self._index = None
             self._is_loaded = False
             # Force garbage collection
-            import gc
-
             gc.collect()
 
     @property
@@ -196,7 +202,7 @@ class FAISSStore:
         """Get the number of vectors in the index."""
         if not self._is_loaded or self._index is None:
             return 0
-        return self._index.ntotal
+        return int(self._index.ntotal)
 
     def __repr__(self) -> str:
         """String representation of the store."""

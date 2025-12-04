@@ -7,12 +7,17 @@ Manages nlptown/bert-base-multilingual-uncased-sentiment for sentiment classific
 import gc
 import logging
 import time
-from typing import ClassVar
+from typing import TYPE_CHECKING, ClassVar
 
 import torch
-from transformers import TextClassificationPipeline, pipeline as hf_pipeline
+from transformers import pipeline as hf_pipeline
 
 from pipeline.config import PipelineSettings
+
+
+if TYPE_CHECKING:
+    from transformers import TextClassificationPipeline
+
 
 logger = logging.getLogger(__name__)
 
@@ -99,8 +104,8 @@ class SentimentAnalyzer:
             elapsed = time.time() - start_time
             logger.info("Sentiment model loaded in %.2f seconds", elapsed)
 
-        except Exception as e:
-            logger.exception("Failed to load sentiment model: %s", e)
+        except Exception:
+            logger.exception("Failed to load sentiment model")
             raise
 
     def unload(self) -> None:
@@ -156,9 +161,7 @@ class SentimentAnalyzer:
 
         # Map to required output format
         raw_label = result["label"]
-        sentiment = self.SENTIMENT_MAP.get(raw_label, "neutral")
-
-        return sentiment
+        return self.SENTIMENT_MAP.get(raw_label, "neutral")
 
     def analyze_batch(self, texts: list[str]) -> list[str]:
         """
@@ -184,6 +187,4 @@ class SentimentAnalyzer:
         results = self.pipeline(truncated_texts)
 
         # Map all results to required output format
-        sentiments = [self.SENTIMENT_MAP.get(result["label"], "neutral") for result in results]
-
-        return sentiments
+        return [self.SENTIMENT_MAP.get(result["label"], "neutral") for result in results]

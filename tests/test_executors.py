@@ -149,7 +149,8 @@ class TestRunCPUBound:
         """Test that exceptions are propagated from run_cpu_bound."""
 
         def failing_function() -> None:
-            raise ValueError("Intentional error")
+            msg = "Intentional error"
+            raise ValueError(msg)
 
         loop = asyncio.get_event_loop()
 

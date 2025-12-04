@@ -18,6 +18,7 @@ from pipeline.telemetry import batch_flush_counter, queue_depth_gauge
 
 from .schemas import PendingRequest, PendingRequestStruct
 
+
 logger = logging.getLogger(__name__)
 settings = get_settings()
 
@@ -307,21 +308,26 @@ class BatchScheduler(Generic[T]):
         try:
             # Call the processing function
             results = await self.process_batch_fn(batch)
-
-            # Set results on futures
-            if len(results) != len(batch.futures):
-                msg = f"Result count mismatch: expected {len(batch.futures)}, got {len(results)}"
-                raise ValueError(msg)
-
-            for future, result in zip(batch.futures, results, strict=False):
-                if not future.done():
-                    future.set_result(result)
-
-            logger.debug("Batch %d processed successfully", batch.batch_id)
-
         except Exception:
             logger.exception("Error processing batch %d", batch.batch_id)
             # Set exception on all futures
             for future in batch.futures:
                 if not future.done():
                     future.set_exception(RuntimeError("Batch processing failed"))
+            return
+
+        # Validate result count - this is a programming error, not a processing error
+        if len(results) != len(batch.futures):
+            msg = f"Result count mismatch: expected {len(batch.futures)}, got {len(results)}"
+            error = ValueError(msg)
+            logger.error(msg)
+            for future in batch.futures:
+                if not future.done():
+                    future.set_exception(error)
+            return
+
+        for future, result in zip(batch.futures, results, strict=False):
+            if not future.done():
+                future.set_result(result)
+
+        logger.debug("Batch %d processed successfully", batch.batch_id)

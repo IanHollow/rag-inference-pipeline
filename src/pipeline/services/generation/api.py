@@ -14,6 +14,7 @@ from fastapi.responses import Response
 from prometheus_client import generate_latest
 
 from pipeline.component_registry import ComponentRegistry
+from pipeline.components.document_store import DocumentStore
 from pipeline.components.schemas import Document
 from pipeline.config import get_settings
 from pipeline.dependencies import get_registry
@@ -36,8 +37,8 @@ from .schemas import (
 )
 from .service import GenerationService
 
+
 if TYPE_CHECKING:
-    from pipeline.components.document_store import DocumentStore
     from pipeline.components.llm import LLMGenerator
     from pipeline.components.reranker import Reranker
     from pipeline.components.sentiment import SentimentAnalyzer
@@ -156,7 +157,8 @@ class GenerationExecutor:
 
         if not llm_generator:
             # Should not happen if registry is healthy, but good to check
-            raise RuntimeError("LLM Generator not available")
+            msg = "LLM Generator not available"
+            raise RuntimeError(msg)
 
         service = GenerationService(
             reranker=reranker,
@@ -170,39 +172,42 @@ class GenerationExecutor:
         return response.items
 
 
-# Global executor instance
-_executor: GenerationExecutor | None = None
+class _ExecutorContainer:
+    """Container for singleton executor instance to avoid global statement."""
+
+    instance: GenerationExecutor | None = None
+
+
+_executor_container = _ExecutorContainer()
 
 
 async def start_generation_executor(registry: ComponentRegistry) -> None:
     """Start the generation executor."""
-    global _executor
-    if _executor is None:
-        _executor = GenerationExecutor(registry)
-        await _executor.start()
+    if _executor_container.instance is None:
+        _executor_container.instance = GenerationExecutor(registry)
+        await _executor_container.instance.start()
         logger.info("GenerationExecutor started")
 
 
 async def stop_generation_executor() -> None:
     """Stop the generation executor."""
-    global _executor
-    if _executor:
-        await _executor.stop()
-        _executor = None
+    if _executor_container.instance:
+        await _executor_container.instance.stop()
+        _executor_container.instance = None
         logger.info("GenerationExecutor stopped")
 
 
 async def get_executor(request: Request) -> GenerationExecutor:
     """Get the generation executor instance."""
-    global _executor
-    if _executor is None:
+    if _executor_container.instance is None:
         registry = get_registry(request)
         await start_generation_executor(registry)
 
-    if _executor is None:
-        raise RuntimeError("Failed to initialize GenerationExecutor")
+    if _executor_container.instance is None:
+        msg = "Failed to initialize GenerationExecutor"
+        raise RuntimeError(msg)
 
-    return _executor
+    return _executor_container.instance
 
 
 def _record_memory_usage() -> None:
@@ -247,18 +252,18 @@ async def generate(
     start_time = time.time()
     _record_memory_usage()
 
+    executor = await get_executor(request)
+
+    # Check readiness before processing
+    llm_generator = executor.registry.get("llm_generator")
+    if not llm_generator or not getattr(llm_generator, "is_loaded", False):
+        _record_pipeline_error("service_unavailable")
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Service not ready (LLM generator not loaded)",
+        )
+
     try:
-        executor = await get_executor(request)
-
-        # Check readiness
-        llm_generator = executor.registry.get("llm_generator")
-        if not llm_generator or not getattr(llm_generator, "is_loaded", False):
-            _record_pipeline_error("service_unavailable")
-            raise HTTPException(
-                status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
-                detail="Service not ready (LLM generator not loaded)",
-            )
-
         futures = [executor.process_request(item) for item in generation_request.items]
         results = await asyncio.gather(*futures)
 
@@ -268,12 +273,9 @@ async def generate(
             processing_time=time.time() - start_time,
         )
 
-    except HTTPException as e:
-        raise e
-
     except Exception as e:
         _record_pipeline_error("unknown")
-        logger.exception("Error processing generation batch: %s", e)
+        logger.exception("Error processing generation batch")
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Failed to process generation batch: {e!s}",
@@ -287,17 +289,15 @@ async def clear_cache(request: Request) -> dict[str, str]:
         executor = await get_executor(request)
         if executor:
             document_store = executor.registry.get("document_store")
-            # Import locally to avoid circular imports or runtime overhead
-            from pipeline.components.document_store import DocumentStore
-
             if isinstance(document_store, DocumentStore):
                 document_store.clear_cache()
                 logger.info("Generation document cache cleared")
                 return {"status": "cleared", "service": "generation"}
+    except Exception:
+        logger.exception("Failed to clear generation cache")
+        return {"status": "error", "detail": "Exception occurred"}
+    else:
         return {"status": "error", "detail": "Executor not initialized"}
-    except Exception as e:
-        logger.error("Failed to clear generation cache: %s", e)
-        return {"status": "error", "detail": str(e)}
 
 
 @router.get("/metrics", response_class=Response)

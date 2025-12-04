@@ -44,10 +44,10 @@ class TestQuerySchemas:
     def test_query_request_missing_fields(self) -> None:
         """Test that missing required fields fail."""
         with pytest.raises(ValidationError):
-            QueryRequest(request_id="req_123")  # type: ignore
+            QueryRequest(request_id="req_123")  # type: ignore[call-arg]
 
         with pytest.raises(ValidationError):
-            QueryRequest(query="test")  # type: ignore
+            QueryRequest(query="test")  # type: ignore[call-arg]
 
     def test_query_response_valid(self) -> None:
         """Test valid QueryResponse."""

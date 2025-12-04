@@ -9,7 +9,7 @@ import json
 import logging
 import time
 
-import lz4.frame  # type: ignore
+import lz4.frame  # type: ignore[import-untyped]
 import msgspec
 from opentelemetry import trace
 
@@ -45,6 +45,7 @@ from .schemas import (
     GenerationResponseItem,
     RerankedDocument,
 )
+
 
 logger = logging.getLogger(__name__)
 settings = get_settings()
@@ -208,11 +209,10 @@ class GenerationService:
                     )
                     for d in docs_structs
                 ]
-            except Exception as e:
-                logger.error(
-                    "Failed to decompress documents for request %s: %s",
+            except Exception:
+                logger.exception(
+                    "Failed to decompress documents for request %s",
                     item.request_id,
-                    e,
                 )
 
         # Step 0: Fetch documents if needed (Doc-ID handoff)

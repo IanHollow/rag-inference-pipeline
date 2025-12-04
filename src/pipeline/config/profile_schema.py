@@ -29,7 +29,8 @@ class ProfileFile(BaseModel):
     def check_duplicate_prefixes(cls, v: list[RouteConfig]) -> list[RouteConfig]:
         prefixes = [route.prefix for route in v]
         if len(prefixes) != len(set(prefixes)):
-            raise ValueError("Duplicate prefixes found in routes")
+            msg = "Duplicate prefixes found in routes"
+            raise ValueError(msg)
         return v
 
     @model_validator(mode="after")
@@ -38,7 +39,6 @@ class ProfileFile(BaseModel):
         for route in self.routes:
             for alias, target_name in route.component_aliases.items():
                 if target_name not in component_names:
-                    raise ValueError(
-                        f"Route alias '{alias}' points to unknown component '{target_name}'"
-                    )
+                    msg = f"Route alias '{alias}' points to unknown component '{target_name}'"
+                    raise ValueError(msg)
         return self

@@ -9,13 +9,18 @@ Tests cover:
 
 import asyncio
 import time
+from typing import TYPE_CHECKING
 from unittest.mock import AsyncMock
 
 import pytest
 import pytest_asyncio
 
 from pipeline.services.gateway.batch_scheduler import AdaptiveBatchPolicy, Batch, BatchScheduler
-from pipeline.services.gateway.schemas import PendingRequest, PendingRequestStruct
+from pipeline.services.gateway.schemas import PendingRequest
+
+
+if TYPE_CHECKING:
+    from pipeline.services.gateway.schemas import PendingRequestStruct
 
 
 class TestAdaptiveBatchPolicy:
@@ -288,7 +293,8 @@ class TestBatchSchedulerAdvanced:
         """Test that errors from process_fn are propagated to callers as RuntimeError."""
 
         async def failing_process(batch: Batch) -> list[str]:
-            raise ValueError("Processing failed")
+            msg = "Processing failed"
+            raise ValueError(msg)
 
         scheduler = BatchScheduler(
             batch_size=1,
