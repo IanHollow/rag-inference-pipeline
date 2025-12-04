@@ -45,6 +45,11 @@ def configure_libraries(settings: PipelineSettings) -> None:
     # sentence-transformers which may spawn worker processes for encoding.
     os.environ["TOKENIZERS_PARALLELISM"] = "false"
 
+    # Set OMP_WAIT_POLICY=PASSIVE to prevent threads from busy-waiting
+    # This reduces CPU usage between searches and improves overall efficiency
+    # Recommended by FAISS docs for OpenBLAS and general performance
+    os.environ.setdefault("OMP_WAIT_POLICY", "PASSIVE")
+
     # NOTE: torch.set_num_threads and torch.set_num_interop_threads are called
     # at module import time (before faiss import) to avoid segfaults on macOS.
 
