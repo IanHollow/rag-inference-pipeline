@@ -120,26 +120,31 @@ class Reranker:
                 except Exception as e:
                     logger.debug("SDPA not available for reranker: %s", e)
 
-            # Apply torch.compile for GPU optimization only (PyTorch 2.0+)
+            # Apply torch.compile for optimization (PyTorch 2.0+)
+            # Only enabled for GPU - CPU inference with variable-length inputs
+            # often gets slower due to graph capture and recompilation overhead
             if (
                 self.settings.enable_torch_compile
                 and hasattr(torch, "compile")
-                and self.device.type == "cuda"
+                and self.device.type in ("cuda", "mps")
             ):
                 try:
-                    compile_mode = self.settings.torch_compile_mode
-                    logger.info(
-                        "Applying torch.compile to reranker with mode=%s",
-                        compile_mode,
-                    )
+                    # CUDA: reduce-overhead for CUDA graphs; MPS: default mode
+                    compile_mode = "reduce-overhead" if self.device.type == "cuda" else "default"
+
+                    logger.info("Applying torch.compile to reranker (mode=%s)", compile_mode)
                     model = torch.compile(
                         model,
                         mode=compile_mode,
-                        fullgraph=False,
+                        fullgraph=False,  # Allow graph breaks
                     )
                     logger.info("torch.compile applied to reranker successfully")
                 except Exception as e:
                     logger.warning("torch.compile failed for reranker, continuing without: %s", e)
+            elif self.device.type == "cpu" and self.settings.enable_torch_compile:
+                logger.info(
+                    "Skipping torch.compile for reranker on CPU (variable-length inputs cause overhead)"
+                )
 
             self.model = cast("PreTrainedModel", model)
             self._loaded = True

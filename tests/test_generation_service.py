@@ -501,16 +501,26 @@ class TestGenerationService:
         mock_sentiment.is_loaded = True
         mock_toxicity.is_loaded = True
 
-        # Mock model behaviors
+        # Mock device (CPU by default - triggers sequential processing)
+        mock_llm.device = MagicMock()
+        mock_llm.device.type = "cpu"
+
+        # Mock model behaviors (both single and batch methods)
         mock_reranker.rerank.return_value = [
             RerankedDocument(doc_id=1, title="Doc 1", content="Content 1", score=0.9, category="")
         ]
+        mock_reranker.rerank_batch.return_value = [
+            [RerankedDocument(doc_id=1, title="Doc 1", content="Content 1", score=0.9, category="")]
+        ]
 
         mock_llm.generate.return_value = "Generated response"
+        mock_llm.generate_batch.return_value = ["Generated response"]
 
         mock_sentiment.analyze.return_value = "positive"
+        mock_sentiment.analyze_batch.return_value = ["positive"]
 
         mock_toxicity.check.return_value = (False, {"label": "toxicity", "score": 0.1})
+        mock_toxicity.check_batch.return_value = [(False, 0.1)]
 
         # Register mocks
         registry.register("reranker", mock_reranker)
@@ -629,7 +639,7 @@ class TestGenerationService:
         # If the fix works, `GenerationService.process_batch` (or `_process_batch_sync`) will receive the compressed docs
         # and decompress them.
         # The `mock_llm` will receive the decompressed docs.
-        # So we can check if `mock_llm.generate` was called with the correct docs.
+        # So we can check if `mock_llm.generate_batch` was called with the correct docs.
 
         # Access the mock_reranker from the app state
         app = cast("FastAPI", mock_app.app)
@@ -638,13 +648,13 @@ class TestGenerationService:
         response = mock_app.post("/generate", json=request_data)
         assert response.status_code == 200
 
-        # Verify Reranker was called with the decompressed doc
+        # Sequential processing calls rerank() (not rerank_batch()) since device is CPU
         args, _ = mock_reranker.rerank.call_args
-        query, input_docs = args
+        query, docs = args
         assert query == "Test query"
-        assert len(input_docs) == 1
-        assert input_docs[0].title == "Compressed Doc"
-        assert input_docs[0].content == "Compressed content"
+        assert len(docs) == 1
+        assert docs[0].title == "Compressed Doc"
+        assert docs[0].content == "Compressed content"
 
     def test_generate_endpoint_validation_error(self, mock_app: TestClient) -> None:
         """Test generation request with invalid data."""
