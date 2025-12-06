@@ -120,7 +120,9 @@ class FAISSStore:
                 logger.info(
                     "Set FAISS nprobe to %d for IVF index (searching %.2f%% of clusters)",
                     self._index.nprobe,
-                    (self._index.nprobe / self._index.nlist * 100) if hasattr(self._index, "nlist") else 0,
+                    (self._index.nprobe / self._index.nlist * 100)
+                    if hasattr(self._index, "nlist")
+                    else 0,
                 )
 
             # Enable precomputed tables for IVFPQ indexes (significant speedup)

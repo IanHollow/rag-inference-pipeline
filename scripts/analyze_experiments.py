@@ -1,7 +1,9 @@
 #!/usr/bin/env python3
 import json
 from pathlib import Path
+import traceback
 
+from matplotlib.container import BarContainer
 import matplotlib.pyplot as plt
 import pandas as pd
 import seaborn as sns
@@ -11,6 +13,133 @@ import yaml
 REPO_ROOT = Path(__file__).parent.parent
 EXPERIMENTS_DIR = REPO_ROOT / "artifacts" / "experiments"
 ANALYSIS_DIR = REPO_ROOT / "analysis"
+
+
+def _is_numeric(value: str) -> bool:
+    """Check if a string represents a numeric value."""
+    try:
+        float(value)
+    except ValueError:
+        return False
+    else:
+        return True
+
+
+def _generate_throughput_vs_latency_plot(df: pd.DataFrame) -> None:
+    """Generate scatter plot of throughput vs P95 latency."""
+    _fig, ax = plt.subplots(figsize=(14, 8))
+
+    sns.scatterplot(
+        data=df,
+        x="throughput",
+        y="latency_p95",
+        hue="run_id",
+        style="batch_size",
+        s=120,
+        ax=ax,
+        legend=False,
+    )
+
+    plt.title("Throughput vs P95 Latency", fontsize=14, fontweight="bold", pad=15)
+    plt.xlabel("Throughput (req/min)", fontsize=12)
+    plt.ylabel("P95 Latency (ms)", fontsize=12)
+    plt.grid(True, alpha=0.3)
+
+    handles, labels = ax.get_legend_handles_labels()
+
+    run_id_handles = []
+    run_id_labels = []
+    batch_handles = []
+    batch_labels = []
+
+    for handle, label in zip(handles, labels, strict=False):
+        if _is_numeric(label):
+            batch_handles.append(handle)
+            batch_labels.append(f"Batch: {label}")
+        else:
+            run_id_handles.append(handle)
+            run_id_labels.append(label)
+
+    ax.legend(
+        run_id_handles[:10] + batch_handles,
+        run_id_labels[:10] + batch_labels,
+        loc="center left",
+        bbox_to_anchor=(1.02, 0.5),
+        fontsize=8,
+        title="Configuration",
+        title_fontsize=9,
+        framealpha=0.9,
+        ncol=1,
+    )
+
+    plt.tight_layout()
+    plt.savefig(ANALYSIS_DIR / "throughput_vs_latency.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved plot to {ANALYSIS_DIR / 'throughput_vs_latency.png'}")
+
+
+def _generate_throughput_bar_plot(df: pd.DataFrame) -> None:
+    """Generate bar chart of throughput by configuration."""
+    _fig, ax = plt.subplots(figsize=(16, 8))
+
+    df_sorted = df.sort_values("throughput", ascending=False)
+
+    sns.barplot(data=df_sorted, x="run_id", y="throughput", hue="batch_size", palette="RdPu", ax=ax)
+
+    plt.title("Throughput by Configuration", fontsize=14, fontweight="bold", pad=15)
+    plt.xlabel("Run ID", fontsize=12)
+    plt.ylabel("Throughput (req/min)", fontsize=12)
+    plt.xticks(rotation=60, ha="right", fontsize=9)
+    plt.legend(title="Batch Size", loc="upper right", fontsize=9, title_fontsize=10)
+
+    for container in ax.containers:
+        if isinstance(container, BarContainer):
+            ax.bar_label(container, fmt="%.1f", fontsize=7, padding=2)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.25)
+
+    plt.savefig(ANALYSIS_DIR / "throughput_bar.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved plot to {ANALYSIS_DIR / 'throughput_bar.png'}")
+
+
+def _generate_latency_comparison_plot(df: pd.DataFrame) -> None:
+    """Generate bar chart comparing P50 and P95 latency."""
+    _fig, ax = plt.subplots(figsize=(16, 8))
+
+    df_sorted = df.sort_values("throughput", ascending=False)
+    df_latency = df_sorted[["run_id", "latency_p50", "latency_p95"]].melt(
+        id_vars=["run_id"],
+        value_vars=["latency_p50", "latency_p95"],
+        var_name="Percentile",
+        value_name="Latency (ms)",
+    )
+    df_latency["Percentile"] = df_latency["Percentile"].map(
+        {"latency_p50": "P50", "latency_p95": "P95"}
+    )
+
+    sns.barplot(
+        data=df_latency,
+        x="run_id",
+        y="Latency (ms)",
+        hue="Percentile",
+        palette=["#4CAF50", "#FF5722"],
+        ax=ax,
+    )
+
+    plt.title("Latency by Configuration (P50 vs P95)", fontsize=14, fontweight="bold", pad=15)
+    plt.xlabel("Run ID", fontsize=12)
+    plt.ylabel("Latency (ms)", fontsize=12)
+    plt.xticks(rotation=60, ha="right", fontsize=9)
+    plt.legend(title="Percentile", loc="upper right", fontsize=10)
+
+    plt.tight_layout()
+    plt.subplots_adjust(bottom=0.25)
+
+    plt.savefig(ANALYSIS_DIR / "latency_comparison.png", dpi=150, bbox_inches="tight")
+    plt.close()
+    print(f"Saved plot to {ANALYSIS_DIR / 'latency_comparison.png'}")
 
 
 def analyze_experiments() -> None:
@@ -86,27 +215,16 @@ def analyze_experiments() -> None:
 
     # Plots
     try:
-        plt.figure(figsize=(10, 6))
-        sns.scatterplot(
-            data=df, x="throughput", y="latency_p95", hue="run_id", style="batch_size", s=100
-        )
-        plt.title("Throughput vs P95 Latency")
-        plt.xlabel("Throughput (req/min)")
-        plt.ylabel("P95 Latency (ms)")
-        plt.grid(True)
-        plt.savefig(ANALYSIS_DIR / "throughput_vs_latency.png")
-        print(f"Saved plot to {ANALYSIS_DIR / 'throughput_vs_latency.png'}")
+        # Set a clean style
+        sns.set_style("whitegrid")
 
-        # Bar chart for throughput
-        plt.figure(figsize=(12, 6))
-        sns.barplot(data=df, x="run_id", y="throughput", hue="batch_size")
-        plt.title("Throughput by Configuration")
-        plt.xticks(rotation=45)
-        plt.tight_layout()
-        plt.savefig(ANALYSIS_DIR / "throughput_bar.png")
-        print(f"Saved plot to {ANALYSIS_DIR / 'throughput_bar.png'}")
+        _generate_throughput_vs_latency_plot(df)
+        _generate_throughput_bar_plot(df)
+        _generate_latency_comparison_plot(df)
+
     except Exception as e:
         print(f"Error generating plots: {e}")
+        traceback.print_exc()
 
 
 if __name__ == "__main__":

@@ -28,10 +28,6 @@ T = TypeVar("T")
 class AdaptiveBatchPolicy:
     """
     Policy for dynamically adjusting batch delay based on load.
-
-    The batch size (max_batch_size) is fixed - it's the threshold for immediate flush.
-    The delay is adaptive: shorter under low load for responsiveness, longer under
-    high load to allow more requests to accumulate.
     """
 
     def __init__(
