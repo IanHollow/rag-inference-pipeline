@@ -203,10 +203,10 @@ class TestPipelineSettings:
         # Note: These don't have environment variable aliases, so we test defaults
         settings = PipelineSettings()
 
-        assert settings.gateway_batch_size == 4
+        assert settings.gateway_batch_size == 32
         assert settings.gateway_batch_timeout_ms == 100
-        assert settings.retrieval_batch_size == 8
-        assert settings.generation_batch_size == 4
+        assert settings.retrieval_batch_size == 32
+        assert settings.generation_batch_size == 32
 
     def test_log_level_validation_valid(self) -> None:
         """Test that valid log levels are accepted."""

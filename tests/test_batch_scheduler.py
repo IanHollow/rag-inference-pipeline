@@ -30,23 +30,19 @@ class TestAdaptiveBatchPolicy:
         """Test initialization with default values."""
         policy = AdaptiveBatchPolicy()
 
-        assert policy.min_batch_size == 1
-        assert policy.max_batch_size == 32
-        assert policy.min_delay_sec == 0.05
-        assert policy.max_delay_sec == 0.5
-        assert policy.current_batch_size == 1.0
-        assert policy.current_delay == 0.05
+        assert policy.max_batch_size == 16
+        assert policy.min_delay_sec == 0.01
+        assert policy.max_delay_sec == 0.2
+        assert policy.current_delay == 0.01
 
     def test_init_custom_values(self) -> None:
         """Test initialization with custom values."""
         policy = AdaptiveBatchPolicy(
-            min_batch_size=2,
             max_batch_size=64,
             min_delay_sec=0.01,
             max_delay_sec=1.0,
         )
 
-        assert policy.min_batch_size == 2
         assert policy.max_batch_size == 64
         assert policy.min_delay_sec == 0.01
         assert policy.max_delay_sec == 1.0
@@ -54,23 +50,20 @@ class TestAdaptiveBatchPolicy:
     def test_update_low_queue_depth(self) -> None:
         """Test policy update with low queue depth."""
         policy = AdaptiveBatchPolicy(
-            min_batch_size=1,
             max_batch_size=32,
             min_delay_sec=0.01,
             max_delay_sec=0.5,
         )
 
-        batch_size, delay = policy.update(queue_depth=2)
+        delay = policy.update(queue_depth=2)
 
-        # Low queue depth should keep values near minimum
-        assert batch_size >= policy.min_batch_size
-        assert batch_size <= policy.max_batch_size
+        # Low queue depth should keep delay near minimum
         assert delay >= policy.min_delay_sec
+        assert delay <= policy.max_delay_sec
 
     def test_update_medium_queue_depth(self) -> None:
         """Test policy update with medium queue depth (5-10)."""
         policy = AdaptiveBatchPolicy(
-            min_batch_size=1,
             max_batch_size=32,
             min_delay_sec=0.01,
             max_delay_sec=0.5,
@@ -78,16 +71,15 @@ class TestAdaptiveBatchPolicy:
 
         # Call multiple times to stabilize
         for _ in range(10):
-            batch_size, _ = policy.update(queue_depth=7)
+            delay = policy.update(queue_depth=7)
 
-        # Should converge toward mid-range values
-        assert batch_size > policy.min_batch_size
-        assert batch_size <= policy.max_batch_size
+        # Should converge toward mid-range delay values
+        assert delay > policy.min_delay_sec
+        assert delay <= policy.max_delay_sec
 
     def test_update_high_queue_depth(self) -> None:
         """Test policy update with high queue depth (>= max_batch_size)."""
         policy = AdaptiveBatchPolicy(
-            min_batch_size=1,
             max_batch_size=32,
             min_delay_sec=0.01,
             max_delay_sec=0.5,
@@ -95,16 +87,14 @@ class TestAdaptiveBatchPolicy:
 
         # Call multiple times to stabilize - use queue_depth >= max_batch_size
         for _ in range(20):
-            batch_size, delay = policy.update(queue_depth=32)
+            delay = policy.update(queue_depth=32)
 
-        # Should converge toward maximum values (EWMA may not reach exact max)
-        assert batch_size >= policy.max_batch_size * 0.9  # Allow 10% tolerance
-        assert delay >= policy.max_delay_sec * 0.9
+        # Should converge toward maximum delay (EWMA may not reach exact max)
+        assert delay >= policy.max_delay_sec * 0.9  # Allow 10% tolerance
 
     def test_update_ewma_smoothing(self) -> None:
         """Test that EWMA smoothing prevents abrupt changes."""
         policy = AdaptiveBatchPolicy(
-            min_batch_size=1,
             max_batch_size=32,
             min_delay_sec=0.01,
             max_delay_sec=0.5,
@@ -114,28 +104,25 @@ class TestAdaptiveBatchPolicy:
         for _ in range(10):
             policy.update(queue_depth=15)
 
-        batch_before = policy.current_batch_size
+        delay_before = policy.current_delay
 
         # Suddenly low queue depth
         _ = policy.update(queue_depth=1)
 
         # Change should be gradual, not instant
-        assert policy.current_batch_size < batch_before
-        assert policy.current_batch_size > policy.min_batch_size
+        assert policy.current_delay < delay_before
+        assert policy.current_delay > policy.min_delay_sec
 
     def test_update_clamps_values(self) -> None:
         """Test that update clamps values to valid range."""
         policy = AdaptiveBatchPolicy(
-            min_batch_size=4,
             max_batch_size=16,
             min_delay_sec=0.1,
             max_delay_sec=0.3,
         )
 
-        batch_size, delay = policy.update(queue_depth=0)
+        delay = policy.update(queue_depth=0)
 
-        assert batch_size >= policy.min_batch_size
-        assert batch_size <= policy.max_batch_size
         assert delay >= policy.min_delay_sec
         assert delay <= policy.max_delay_sec
 
@@ -227,9 +214,8 @@ class TestBatchSchedulerAdvanced:
         )
 
         assert scheduler.policy is not None
-        # Adaptive policy uses batch_size as min and 4x as max for scaling under load
-        assert scheduler.policy.min_batch_size == 16
-        assert scheduler.policy.max_batch_size == 64  # 16 * 4
+        # Adaptive policy uses batch_size as max for scaling under load
+        assert scheduler.policy.max_batch_size == 16
         assert scheduler.policy.max_delay_sec == 0.3
 
     @pytest.mark.asyncio
