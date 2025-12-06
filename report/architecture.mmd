@@ -1,0 +1,91 @@
+%%{init: {
+  'theme': 'base',
+  'themeVariables': {
+    'primaryColor': '#4285F4',
+    'primaryTextColor': '#202124',
+    'primaryBorderColor': '#1a73e8',
+    'lineColor': '#5f6368',
+    'secondaryColor': '#34A853',
+    'tertiaryColor': '#FBBC04',
+    'background': '#ffffff',
+    'mainBkg': '#ffffff',
+    'nodeBorder': '#dadce0',
+    'clusterBkg': '#f8f9fa',
+    'clusterBorder': '#5f6368',
+    'titleColor': '#202124',
+    'edgeLabelBackground': '#ffffff',
+    'fontSize': '14px',
+    'fontFamily': 'Segoe UI, Arial, sans-serif'
+  },
+  'flowchart': {
+    'curve': 'basis',
+    'padding': 20,
+    'nodeSpacing': 40,
+    'rankSpacing': 50,
+    'htmlLabels': true,
+    'useMaxWidth': true
+  }
+}}%%
+
+flowchart LR
+    Client(["Client"])
+
+    subgraph GW ["Gateway - Node 0"]
+        direction TB
+        API["Gateway API"]
+        BATCH["BatchScheduler"]
+        ORCH["Orchestrator"]
+        RPC["RPC Client"]
+        EMB0[("Embedding")]
+    end
+
+    subgraph RT ["Retrieval - Node 1"]
+        direction TB
+        EMB1[("Embedding")]
+        CACHE[("LRU Cache")]
+        FAISS[("FAISS Index")]
+        DOCS[("Doc Store")]
+        RERANK[("Reranker")]
+    end
+
+    subgraph GN ["Generation - Node 2"]
+        direction TB
+        LLM[("LLM")]
+        SENT[("Sentiment")]
+        TOX[("Toxicity")]
+    end
+
+    %% Main flow - left to right
+    Client --> API
+    API --> BATCH
+    BATCH --> ORCH
+    ORCH -.-> EMB0
+    EMB0 -.-> ORCH
+    ORCH --> RPC
+
+    RPC -->|queries| EMB1
+    EMB1 <--> CACHE
+    EMB1 --> FAISS
+    FAISS --> DOCS
+    DOCS --> RERANK
+
+    RERANK -->|documents| LLM
+    LLM --> SENT
+    LLM --> TOX
+
+    SENT --> ORCH
+    TOX --> ORCH
+    ORCH -->|response| Client
+
+    %% Styles
+    classDef clientNode fill:#E3F2FD,stroke:#1565C0,stroke-width:2px,color:#0D47A1
+    classDef gwNode fill:#E8F5E9,stroke:#2E7D32,stroke-width:1px,color:#1B5E20
+    classDef rtNode fill:#FFF8E1,stroke:#FF8F00,stroke-width:1px,color:#E65100
+    classDef gnNode fill:#F3E5F5,stroke:#7B1FA2,stroke-width:1px,color:#4A148C
+    classDef modelNode fill:#FFFDE7,stroke:#FBC02D,stroke-width:1px,color:#F57F17
+    classDef storeNode fill:#E1F5FE,stroke:#0288D1,stroke-width:1px,color:#01579B
+
+    class Client clientNode
+    class API,BATCH,ORCH,RPC gwNode
+    class EMB0,EMB1,RERANK,LLM,SENT,TOX modelNode
+    class CACHE,FAISS,DOCS storeNode
