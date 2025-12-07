@@ -2,7 +2,7 @@
 FAISS index management for retrieval service.
 
 Handles lazy loading and persistent storage of FAISS index for ANN search.
-Supports both CPU (faiss-cpu) and GPU (faiss-gpu) backends.
+Uses faiss-cpu for approximate nearest neighbor search.
 """
 
 import gc
@@ -11,29 +11,11 @@ from pathlib import Path
 
 import faiss
 import numpy as np
-import torch
 
 from pipeline.config import PipelineSettings
 
 
 logger = logging.getLogger(__name__)
-
-
-def _is_faiss_gpu_available() -> bool:
-    """
-    Check if FAISS GPU support is available.
-
-    Returns True only if:
-    1. faiss-gpu package is installed (provides GPU functions)
-    2. CUDA is available via PyTorch
-    """
-    # Check if CUDA is available
-    if not torch.cuda.is_available():
-        return False
-
-    # Check if faiss has GPU support by looking for GPU-specific functions
-    # faiss-cpu doesn't have StandardGpuResources, faiss-gpu does
-    return hasattr(faiss, "StandardGpuResources") and hasattr(faiss, "index_cpu_to_gpu")
 
 
 class FAISSStore:
@@ -85,22 +67,6 @@ class FAISSStore:
             else:
                 # Default path eagerly loads the entire index into RAM
                 self._index = faiss.read_index(str(self.index_path))
-
-            # Move to GPU if available (FAISS GPU only supports NVIDIA GPUs, not MPS)
-            # Requires faiss-gpu package: pip install faiss-gpu (Linux only)
-            if not self.settings.only_cpu and _is_faiss_gpu_available():
-                try:
-                    logger.info("Moving FAISS index to GPU (faiss-gpu detected)...")
-                    res = faiss.StandardGpuResources()
-                    self._index = faiss.index_cpu_to_gpu(res, 0, self._index)
-                    logger.info("FAISS index moved to GPU successfully")
-                except Exception as e:
-                    logger.warning("Failed to move FAISS index to GPU, falling back to CPU: %s", e)
-            elif not self.settings.only_cpu and torch.cuda.is_available():
-                logger.info(
-                    "CUDA available but faiss-gpu not installed. "
-                    "Install with: pip uninstall faiss-cpu && pip install faiss-gpu"
-                )
 
             self._is_loaded = True
 
