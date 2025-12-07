@@ -13,6 +13,7 @@ repos:
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=1024]
+        exclude: ^uv\.lock$
       - id: end-of-file-fixer
       - id: trailing-whitespace
       - id: mixed-line-ending

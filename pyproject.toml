@@ -7,7 +7,7 @@ name = "cs5416-ml-pipeline"
 version = "0.1.0"
 description = "Distributed ML inference pipeline"
 readme = "README.md"
-requires-python = ">=3.10.12,<3.13" # UGCLinux has Python 3.10.12; cap at <3.13 for faiss-gpu compatibility
+requires-python = ">=3.10.12" # UGCLinux has Python 3.10.12
 authors = [
   { name = "Kadambari Mirashi", email = "km2266@cornell.edu" },
   { name = "Ian Holloway", email = "imh39@cornell.edu" },
@@ -47,15 +47,8 @@ dependencies = [
   "seaborn>=0.13.2",
   "pyyaml>=6.0.3",
   "flask>=3.1.2",
+  "faiss-cpu>=1.13.0",
 ]
-
-# FAISS backend selection - choose ONE of [cpu] or [gpu]
-# These are mutually exclusive, do not install both!
-[project.optional-dependencies]
-cpu = [
-  "faiss-cpu>=1.13.0", # Works on all platforms (macOS, Linux, Windows)
-]
-gpu = ["faiss-gpu>=1.7.2; sys_platform == 'linux'"]
 
 [project.urls]
 Repository = "https://github.com/IanHollow/cs5416-ml-pipeline"
