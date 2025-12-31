@@ -1,4 +1,4 @@
-# cs5416-ml-pipeline
+# rag-inference-pipeline
 
 ## Development Environment
 
