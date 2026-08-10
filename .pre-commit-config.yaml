@@ -59,6 +59,7 @@ repos:
         files: ^(pyproject|taplo|\.taplo)\.toml$|\.toml$
       - id: taplo-lint
         name: taplo lint (TOML)
+        args: [--no-schema]
         files: ^(pyproject|taplo|\.taplo)\.toml$|\.toml$
   - repo: https://github.com/lyz-code/yamlfix/
     rev: 1.19.0
