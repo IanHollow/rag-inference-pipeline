@@ -353,7 +353,10 @@ class LLMGenerator:
             generated_tokens = generated_ids[0, input_length:]
 
             # Decode single sequence (faster than batch_decode for single item)
-            response = tokenizer.decode(generated_tokens, skip_special_tokens=True)
+            # ``decode`` returns one string for a single token sequence. The
+            # Transformers 5 type stubs also include the batched return type,
+            # so narrow it explicitly here.
+            response = cast("str", tokenizer.decode(generated_tokens, skip_special_tokens=True))
 
         # Explicit cleanup of intermediate tensors to prevent memory leaks
         del model_inputs, generated_ids, generated_tokens
@@ -445,7 +448,10 @@ class LLMGenerator:
             for i, input_len in enumerate(input_lengths):
                 # Extract only the generated portion (after input)
                 generated_tokens = generated_ids[i, input_len:]
-                response = self.tokenizer.decode(generated_tokens, skip_special_tokens=True)
+                response = cast(
+                    "str",
+                    self.tokenizer.decode(generated_tokens, skip_special_tokens=True),
+                )
                 responses.append(response)
 
         # Explicit cleanup of intermediate tensors
