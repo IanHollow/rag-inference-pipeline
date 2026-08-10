@@ -53,8 +53,9 @@ class TestRuntimeFactory(unittest.TestCase):
         app = create_app_from_profile(self.settings)
 
         # Verify routes
-        routes = [getattr(r, "path", "") for r in app.routes]
-        # The retrieval router has / endpoint, so mounted at /custom_retrieve it becomes /custom_retrieve
+        routes = app.openapi()["paths"]
+        # FastAPI may represent included routers lazily, so verify the public
+        # route table rather than its internal app.routes representation.
         assert "/custom_retrieve" in routes
 
         # Verify aliases
