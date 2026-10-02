@@ -1,0 +1,70 @@
+run_id,full_run_id,notes,batch_size,throughput,latency_p50,latency_p95,success_rate,total_rss_mb
+retrieval_with_rerank,retrieval_with_rerank_20251204_123606,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,75.14,37035.5,44791.36,100.0,4991.09375
+retrieval_with_rerank,retrieval_with_rerank_20251204_130242,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,72.36,29857.9,48308.28,100.0,4479.484375
+retrieval_with_rerank,retrieval_with_rerank_20251204_174135,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,96.51,20925.03,32883.64,100.0,8.984375
+baseline_reference,baseline_reference_20251201_152220,"Serves as the baseline for comparing all other experiments. Use this run to
+capture per-node RSS, latency distribution, and stage durations for reference.",4.0,46.46,997.72,2644.42,100.0,8.953125
+retrieval_with_rerank,retrieval_with_rerank_20251204_173806,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,88.06,20668.37,43122.54,100.0,8.078125
+batch_sweep_ht_8x4,batch_sweep_ht_8x4_20251201_152358,"Compare directly with batch_sweep_ll_2x2 to illustrate how batching knobs
+impact throughput, latency, and memory. Capture p95 latency and per-node RSS
+for both runs.",8.0,44.34,1029.3,2665.2,100.0,8.96875
+optimized_batch_4,optimized_batch_4_20251201_152821,"Optimized configuration moving Embedder to Node 0 and Reranker to Node 1.
+Using Batch Size 4 to compare with retrieval_with_rerank.",4.0,67.45,3256.24,6843.55,100.0,8.984375
+retrieval_with_rerank,retrieval_with_rerank_20251201_153015,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,101.59,26077.51,30915.89,100.0,7.84375
+retrieval_with_rerank,retrieval_with_rerank_20251204_180231,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,106.05,26459.47,29929.21,100.0,5.53125
+retrieval_with_rerank,retrieval_with_rerank_20251204_173624,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,104.5,26140.21,29761.15,100.0,8.40625
+retrieval_with_rerank,retrieval_with_rerank_20251204_181846,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,88.23,30774.35,37579.99,100.0,5.859375
+retrieval_with_rerank,retrieval_with_rerank_20251204_173951,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,104.57,19163.15,36334.97,100.0,8.984375
+retrieval_with_rerank,retrieval_with_rerank_20251204_182039,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,86.0,36698.94,39438.29,100.0,7.75
+retrieval_with_rerank,retrieval_with_rerank_20251204_184948,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,134.73,107966.88,110131.46,100.0,8.9375
+retrieval_with_rerank,retrieval_with_rerank_20251204_180620,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,108.16,27489.28,30798.62,100.0,7.96875
+retrieval_with_rerank,retrieval_with_rerank_20251204_184621,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,135.73,50922.56,54400.67,100.0,8.015625
+retrieval_with_rerank,retrieval_with_rerank_20251204_123900,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,78.73,34149.39,39529.24,100.0,5.203125
+retrieval_with_rerank,retrieval_with_rerank_20251204_173447,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,101.76,26053.41,30985.92,100.0,5.40625
+retrieval_with_rerank,retrieval_with_rerank_20251204_184217,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,114.66,25751.75,29141.91,100.0,8.953125
+retrieval_with_rerank,retrieval_with_rerank_20251204_124607,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,93.37,28715.44,33417.62,100.0,5253.21875
+batch_sweep_ll_2x2,batch_sweep_ll_2x2_20251201_152702,"Use alongside the high-throughput sweep to produce a latency/throughput curve
+for the report.",2.0,43.11,1118.53,2684.32,100.0,8.984375
+retrieval_with_rerank,retrieval_with_rerank_20251204_183514,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,95.18,31629.86,34977.53,100.0,7.1875
+retrieval_with_rerank,retrieval_with_rerank_20251204_135926,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,105.2,25414.59,29880.88,100.0,7.96875
+retrieval_with_rerank,retrieval_with_rerank_20251204_125718,"Capture stage-level metrics to confirm rerank CPU shifts from Node 2 to Node
+1. Compare throughput against the baseline to decide if this composition is
+worth the added Node 1 load.",32.0,92.27,26288.14,31453.9,100.0,2.3125

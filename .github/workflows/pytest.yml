@@ -37,6 +37,31 @@ jobs:
             ${{ runner.os }}-uv-
       - name: Install dependencies
         run: uv sync --all-extras --dev
+      - name: Verify faiss-cpu installation
+        run: |
+          echo "Checking faiss-cpu package..."
+          uv run python -c "
+          import sys
+          print(f'Python: {sys.version}')
+          print(f'Platform: {sys.platform}')
+          try:
+              import faiss
+              print(f'FAISS module: {faiss}')
+              faiss_file = getattr(faiss, \"__file__\", \"no __file__\")
+              faiss_version = getattr(faiss, \"__version__\", \"no version\")
+              print(f'FAISS file: {faiss_file}')
+              print(f'FAISS version: {faiss_version}')
+              print(f'Has IndexFlatL2: {hasattr(faiss, \"IndexFlatL2\")}')
+              print(f'Has read_index: {hasattr(faiss, \"read_index\")}')
+              # Try to actually use it
+              idx = faiss.IndexFlatL2(128)
+              print(f'Created test index successfully: {idx}')
+          except Exception as e:
+              print(f'FAISS import/test failed: {e}')
+              import traceback
+              traceback.print_exc()
+              sys.exit(1)
+          "
       - name: Run tests with coverage
         run: uv run pytest
       - name: Upload coverage to Codecov
